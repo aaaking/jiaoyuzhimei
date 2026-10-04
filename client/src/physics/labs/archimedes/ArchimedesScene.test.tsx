@@ -9,7 +9,7 @@ import { rotatedLoadPosition } from './suspendedMotion'
 import { createLabRuntime, reduceLabAction } from '../../runtime/reducer'
 import { textbookPhysicsExperiments } from '../../curriculum/catalog'
 
-afterEach(() => { document.body.innerHTML = ''; localStorage.clear(); vi.unstubAllGlobals(); vi.useRealTimers() })
+afterEach(() => { document.body.innerHTML = ''; localStorage.clear(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); vi.useRealTimers() })
 
 it('自动采样等待静止，取消计时或只读时不写数据，采样不增加撤销记录', () => {
   vi.useFakeTimers()
@@ -409,7 +409,8 @@ it('溢水杯可改名、切换杯底绳、恢复水位与删除，摆位复位�
   act(() => root.unmount())
 })
 
-it.each(['pointerup', 'pointercancel', 'lostpointercapture', 'blur'])('按住测力计即显示顶部手势，%s清除手势且不增加实验记录', endType => {
+it.each(['pointerup', 'pointercancel', 'lostpointercapture', 'blur'].flatMap(endType => ['/', '/jiaoyuzhimei/'].map(base => ({ endType, base }))))('按住测力计在 $base 下加载顶部手势，$endType 清除手势且不增加实验记录', ({ endType, base }) => {
+  vi.stubEnv('BASE_URL', base)
   const host = document.createElement('div')
   document.body.append(host)
   const root = createRoot(host)
@@ -423,6 +424,7 @@ it.each(['pointerup', 'pointercancel', 'lostpointercapture', 'blur'])('按住测
   Object.assign(meter, { setPointerCapture() {}, hasPointerCapture: () => false })
   act(() => meter.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerId: 1, button: 0, clientX: 474, clientY: 200 })))
   const handVisible = !!host.querySelector('[data-meter-grip-hand]')
+  const handHref = host.querySelector('[data-meter-grip-hand]')?.getAttribute('href')
   act(() => {
     if (endType === 'blur') window.dispatchEvent(new Event('blur'))
     else meter.dispatchEvent(new PointerEvent(endType, { bubbles: true, pointerId: 1, clientX: 474, clientY: 200 }))
@@ -430,6 +432,7 @@ it.each(['pointerup', 'pointercancel', 'lostpointercapture', 'blur'])('按住测
   const handHidden = !host.querySelector('[data-meter-grip-hand]')
   act(() => root.unmount())
   expect(handVisible).toBe(true)
+  expect(handHref).toBe(`${base}physics/apparatus/meter-grip-hand.png`)
   expect(handHidden).toBe(true)
   expect(runtime.past).toHaveLength(0)
 })

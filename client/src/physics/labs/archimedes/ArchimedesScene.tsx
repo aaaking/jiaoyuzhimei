@@ -182,7 +182,7 @@ export function ArchimedesScene({ state, dispatch, onOpenReport, readOnly = fals
         {current.bucketPour && <text x={current.positions.bucket.x + 165} y={current.positions.bucket.y + 40} fill="#f4f5f3" fontSize="16" pointerEvents="none">{current.collectedVolume.toFixed(1)} mL</text>}
         {current.meterSettings.showTrace && current.meterTrace.length > 1 && <polyline data-meter-trace points={current.meterTrace.map(p => `${p.x},${p.y}`).join(' ')} fill="none" stroke="#54a8fa" strokeWidth="1.5" strokeDasharray="4 3" pointerEvents="none" />}
         {!current.meterRemoved && <SpringMeter state={current} selected={meterSelected} />}
-        {meterHeld && !current.meterRemoved && <image data-meter-grip-hand aria-hidden="true" href="/physics/apparatus/meter-grip-hand.png" x={current.positions.meter.x - 24} y={current.positions.meter.y - 96} width="218" height="109" pointerEvents="none" />}
+        {meterHeld && !current.meterRemoved && <image data-meter-grip-hand aria-hidden="true" href={`${import.meta.env.BASE_URL}physics/apparatus/meter-grip-hand.png`} x={current.positions.meter.x - 24} y={current.positions.meter.y - 96} width="218" height="109" pointerEvents="none" />}
         <WaterEffects state={current} />
         {!current.cupRemoved && hit('cup', -110, -5, 220, 287)}
         {!current.bucketRemoved && hit('bucket', -52, -57, 104, 173)}
