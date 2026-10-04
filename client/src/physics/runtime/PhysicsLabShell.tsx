@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ComponentType } from 'react'
+import { useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react'
 import { FileText, Redo2, RotateCcw, TableProperties, Undo2 } from 'lucide-react'
 import type { TextbookPhysicsExperiment } from '../curriculum/types'
 import { browserPhysicsSessionRepository, type PhysicsSessionRepository } from '../sessions/repository'
@@ -19,6 +19,7 @@ import {
 export interface PhysicsLabSceneProps<TState> {
   state: TState
   dispatch(action: LabAction, detail?: string): void
+  onOpenReport?(): void
 }
 
 export interface PhysicsLabShellProps<TState> {
@@ -35,6 +36,10 @@ export interface PhysicsLabShellProps<TState> {
   immersive?: boolean
   /** 沉浸式模式下「返回」按钮的去向 */
   backTo?: string
+  editableTitleStorageKey?: string
+  showActionLabels?: boolean
+  showFooter?: boolean
+  ReportView?: ComponentType<{ open: boolean; onClose(): void; footer?: ReactNode }>
 }
 
 export const LAB_DESKTOP_LAYOUT = {
@@ -71,12 +76,17 @@ export default function PhysicsLabShell<TState>({
   repository = browserPhysicsSessionRepository,
   immersive = true,
   backTo = '/physics',
+  editableTitleStorageKey,
+  showActionLabels = false,
+  showFooter = true,
+  ReportView,
 }: PhysicsLabShellProps<TState>) {
   const runtime = useLabRuntime(controller)
   const coordinatorRef = useRef<ReturnType<typeof createLabSessionCoordinator> | null>(null)
   const coordinatorExperimentRef = useRef<string | null>(null)
   const [session, setSession] = useState<PhysicsSession>()
   const [reportOpen, setReportOpen] = useState(false)
+  const [openPanel, setOpenPanel] = useState<string | null>(null)
   const [recordedMeasurements, setRecordedMeasurements] = useState<PhysicsSession['measurements']>([])
 
   if (coordinatorRef.current === null || coordinatorExperimentRef.current !== experiment.id) {
@@ -134,7 +144,11 @@ export default function PhysicsLabShell<TState>({
   }
 
   function runToolbarCommand(command: 'undo' | 'redo' | 'reset') {
-    if (!session || isCompleted) return
+    if (!session) return
+    if (isCompleted) {
+      if (command === 'reset') createNewSession()
+      return
+    }
     const before = runtime.state
     const transition = runtime[command]()
     const changed = transition.state !== before
@@ -165,7 +179,11 @@ export default function PhysicsLabShell<TState>({
     if (!completed) return
     setSession(completed)
     setRecordedMeasurements(completed.measurements)
-    setReportOpen(true)
+    if (ReportView) {
+      setReportOpen(false)
+      setOpenPanel('table')
+    }
+    else setReportOpen(true)
   }
 
   function createNewSession() {
@@ -178,6 +196,12 @@ export default function PhysicsLabShell<TState>({
     })
     applySynchronized(synchronized ?? nextSession)
     setReportOpen(false)
+    setOpenPanel(null)
+  }
+
+  function openReportView() {
+    setOpenPanel(null)
+    setReportOpen(true)
   }
 
   const apparatus = (
@@ -202,17 +226,23 @@ export default function PhysicsLabShell<TState>({
     return (
       <ImmersiveLabStage
         title={experiment.title}
+        editableTitleStorageKey={editableTitleStorageKey}
+        showActionLabels={showActionLabels}
         backTo={backTo}
         feedback={runtime.feedback}
+        autoDismissFeedback={experiment.id === 'ammeter-use'}
+        openPanelId={openPanel}
+        onPanelChange={(panelId) => { setReportOpen(false); setOpenPanel(panelId) }}
         actions={[
           { id: 'undo', label: '撤销', icon: <UndoIcon />, onClick: () => runToolbarCommand('undo'), disabled: isCompleted },
-          { id: 'redo', label: '重做', icon: <RedoIcon />, onClick: () => runToolbarCommand('redo'), disabled: isCompleted },
-          { id: 'reset', label: '重置实验', icon: <ResetIcon />, onClick: () => runToolbarCommand('reset'), disabled: isCompleted },
+          ...(experiment.id === 'ammeter-use' ? [] : [{ id: 'redo', label: '重做', icon: <RedoIcon />, onClick: () => runToolbarCommand('redo'), disabled: isCompleted }]),
+          { id: 'reset', label: '重置实验', icon: <ResetIcon />, onClick: () => runToolbarCommand('reset') },
         ]}
         panels={[
           {
             id: 'table',
-            label: '数据表格',
+            label: experiment.id === 'ammeter-use' ? '实验数据' : '数据表格',
+            title: experiment.id === 'ammeter-use' ? '实验结果数据' : undefined,
             content: (
               <div className="space-y-4">
                 <button
@@ -230,6 +260,8 @@ export default function PhysicsLabShell<TState>({
           {
             id: 'report',
             label: '实验报告',
+            onOpen: ReportView ? openReportView : undefined,
+            active: ReportView ? reportOpen : undefined,
             content: (
               <div className="space-y-3 text-sm leading-6 text-[#4b4742]">
                 {session?.report === undefined ? <p>完成实验后自动生成实验报告。</p> : null}
@@ -240,10 +272,11 @@ export default function PhysicsLabShell<TState>({
                 >
                   打开实验报告
                 </button>
+                {!showFooter && <button type="button" onClick={completeExperiment} disabled={isCompleted} className="rounded-[6px] bg-[#165DFF] px-4 py-2 text-sm font-semibold text-white disabled:opacity-40">完成实验</button>}
               </div>
             ),
           },
-        ]}
+        ].filter((panel) => !ReportView || panel.id !== 'report')}
         overlay={
           prompt === undefined || prompt === null ? null : (
             <div className="absolute left-1/2 top-20 z-30 -translate-x-1/2">
@@ -254,7 +287,7 @@ export default function PhysicsLabShell<TState>({
             </div>
           )
         }
-        footer={
+        footer={showFooter ?
           <>
             <span className="text-[13px] font-semibold text-[#e6ebf1]">实验台</span>
             <span className="text-[12px] text-[#8b95a2]">{runtime.feedback?.message ?? '调整器材后记录读数。'}</span>
@@ -282,11 +315,14 @@ export default function PhysicsLabShell<TState>({
                 完成实验
               </button>
             </div>
-          </>
+          </> : null
         }
       >
-        <Scene state={runtime.state} dispatch={dispatchSemantic} />
-        <ExperimentReportDialog open={reportOpen} onClose={() => setReportOpen(false)} session={session} />
+        <Scene state={runtime.state} dispatch={dispatchSemantic} onOpenReport={ReportView ? openReportView : undefined} />
+        {ReportView && <ReportView open={reportOpen} onClose={() => setReportOpen(false)} footer={<div className="flex gap-2">
+          <button type="button" onClick={() => { setReportOpen(false); setOpenPanel('table') }} className="rounded-[6px] border border-[#d8d2c8] px-3 py-1.5 text-xs text-[#4b4742]">查看实验数据</button>
+        </div>} />}
+        {!ReportView && <ExperimentReportDialog open={reportOpen} onClose={() => setReportOpen(false)} session={session} />}
       </ImmersiveLabStage>
     )
   }
@@ -316,7 +352,7 @@ export default function PhysicsLabShell<TState>({
             <div className="flex items-center gap-2">
               <TooltipButton label="撤销" onClick={() => runToolbarCommand('undo')} disabled={isCompleted}><Undo2 className="size-4" aria-hidden="true" /></TooltipButton>
               <TooltipButton label="重做" onClick={() => runToolbarCommand('redo')} disabled={isCompleted}><Redo2 className="size-4" aria-hidden="true" /></TooltipButton>
-              <TooltipButton label="重置" onClick={() => runToolbarCommand('reset')} disabled={isCompleted}><RotateCcw className="size-4" aria-hidden="true" /></TooltipButton>
+              <TooltipButton label="重置" onClick={() => runToolbarCommand('reset')}><RotateCcw className="size-4" aria-hidden="true" /></TooltipButton>
               <TooltipButton label="数据表格" onClick={recordCurrentMeasurements} disabled={isCompleted}><TableProperties className="size-4" aria-hidden="true" /></TooltipButton>
               <TooltipButton label="实验报告" onClick={() => setReportOpen(true)}><FileText className="size-4" aria-hidden="true" /></TooltipButton>
             </div>

@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import { AmmeterScene } from './CompetitorScene'
+import { AmmeterScene } from './CompetitorScene.tsx'
 import { AmmeterSchematic } from './SchematicView'
-import { ammeterController, createAmmeterState, type AmmeterTrial } from './controller'
+import { practiceController } from './practiceController'
+import { ammeterController, createAmmeterState } from './controller'
 import { CIRCUIT_TERMINALS, RANGE_SPEC, isTerminalDraggable, needleAngle, terminalHitSegment } from './definition'
 import {
   COMPETITOR_TERMINAL_WORLD,
@@ -30,22 +31,6 @@ function render(state = createAmmeterState()) {
   return renderToString(<AmmeterScene state={state} dispatch={noop} />)
 }
 
-function trial(overrides: Partial<AmmeterTrial> = {}): AmmeterTrial {
-  return {
-    id: 'ammeter-trial-1',
-    mode: 'series',
-    position: 'main',
-    range: '0.6A',
-    reading: 0.14,
-    overRange: false,
-    supplyVoltage: 3,
-    lampResistance: 10,
-    wireCount: 5,
-    edges: [],
-    ...overrides,
-  }
-}
-
 describe('竞品复原实验页面', () => {
   it('渲染竞品同款深色画布与标题', () => {
     const html = render()
@@ -59,8 +44,8 @@ describe('竞品复原实验页面', () => {
     expect(html).toContain('perspective:1600px')
     expect(html).toContain('rotateX(')
     expect(html).toContain('滚轮缩放')
-    expect(html).toContain('复位视角')
-    expect(html).toContain('铺满画布')
+    expect(html).not.toContain('aria-label="复位视角"')
+    expect(html).not.toContain('aria-label="铺满画布"')
   })
 
   it('无限画布不再有背景方框：无桌面矩形、无网格、无暗角', () => {
@@ -124,34 +109,30 @@ describe('竞品复原实验页面', () => {
 
   it('每个接线柱都有无障碍标签与可点击命中区', () => {
     const html = render()
-    for (const terminal of Object.values(CIRCUIT_TERMINALS)) {
-      expect(html).toContain(terminal.label)
+    for (const [id, terminal] of Object.entries(CIRCUIT_TERMINALS)) {
+      expect(html).toContain(id === 'lamp2-a' ? '开关 S₂ 左接线柱' : id === 'lamp2-b' ? '开关 S₂ 右接线柱' : terminal.label)
     }
     expect(html).toContain('data-hit-target="ammeter-terminal-knob"')
   })
 
-  it('所选量程按钮为按下状态并显示分度值提示', () => {
+  it('保留实物量程接线柱，移除底部量程快捷按钮', () => {
     const html = render({ ...createAmmeterState(), activeRange: '0.6A' })
-    expect(html).toContain('aria-pressed="true"')
-    expect(html).toContain('当前量程 0～0.6 A')
-    expect(html).toContain('0.02')
+    expect(html).toContain('data-terminal="ammeter-0.6"')
+    expect(html).toContain('data-terminal="ammeter-3"')
+    expect(html).not.toContain('选择量程')
   })
 
-  it('闭合开关并读数后显示读数与发光提示', () => {
-    const html = render({
-      ...createAmmeterState(),
-      switchClosed: true,
-      activeRange: '0.6A',
-      activeTrialId: 'ammeter-trial-1',
-      trials: [trial()],
-    })
-    expect(decodeEntities(html)).toMatch(/0\.14\s*A/)
-    expect(html).toContain('灯泡发光')
+  it('闭合开关后实物电表显示读数、灯泡发光', () => {
+    const initial = practiceController.createInitialState()
+    const closed = practiceController.reduce(initial, { type: 'setSwitch', payload: 'closed' }).state
+    const html = render(closed)
+    expect(decodeEntities(html)).toMatch(/0\.29\s*A/)
+    expect(html).toContain('data-lamp-glow')
   })
 
   it('量程过小时给出明显告警', () => {
     const html = render({ ...createAmmeterState(), overRangeWarning: '指针已打到最右端' })
-    expect(html).toContain('量程过小')
+    expect(html).toContain('实验现象')
     expect(html).toContain('指针已打到最右端')
   })
 
@@ -302,7 +283,8 @@ describe('电路图视图', () => {
 describe('控制器初始状态', () => {
   it('界面状态与控制器初始状态保持一致', () => {
     const html = render(ammeterController.createInitialState())
-    expect(html).toContain('开关断开')
+    expect(html).toContain('data-reading="0"')
+    expect(html).not.toContain('data-lamp-glow')
     expect(html).not.toContain('量程过小')
   })
 })

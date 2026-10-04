@@ -81,11 +81,11 @@ select {
  * 视觉上就是画面上凭空多出一个"小方框"，正是用户反馈里
  * 「有一个小框的边界」的观感来源之一。
  *
- * 这里只在**用鼠标/触摸**操作时去掉描边；键盘 Tab 仍然保留可见焦点环，
- * 无障碍不退化。
+ * 操作热区不绘制外框；工具栏和表单控件仍使用自己的焦点样式。
  */
-[data-immersive-lab] [data-hit-target]:focus:not(:focus-visible),
-[data-immersive-lab] [data-component-drag]:focus:not(:focus-visible) {
+[data-immersive-lab] [data-hit-target]:focus,
+[data-immersive-lab] [data-component-drag]:focus,
+[data-immersive-lab] [data-wire-selectable]:focus {
   outline: none;
 }
 

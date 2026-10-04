@@ -21,7 +21,7 @@
  */
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import { AmmeterScene } from './CompetitorScene'
+import { AmmeterScene } from './CompetitorScene.tsx'
 import { createAmmeterState } from './controller'
 import {
   CANVAS_WORLD_BOUNDS,
@@ -329,28 +329,27 @@ describe('命中区与本体必须解绑（回归：既要点击余量、又不�
 })
 
 describe('界面必须给出「全屏画布」与「收回器材」的可见入口', () => {
-  it('操作提示明说这是全屏画布（不再是"中间一块"）', () => {
-    expect(render()).toContain('全屏画布任意摆放')
+  it('移除左上说明后，无限画布手势提示仍保留', () => {
+    expect(render()).not.toContain('全屏画布任意摆放')
+    expect(render()).toContain('滚轮缩放')
   })
 
   it('初始没有器材出屏幕时不显示"全部收回"（避免无谓的浮层）', () => {
     expect(render()).not.toContain('在屏幕外')
   })
 
-  it('场景保留了「全部收回」的能力（visibleRect 仍在，只是不再参与拖动）', async () => {
+  it('场景保留显式收回入口，拖动和相机变化不强制收回器材', async () => {
     /**
-     * 语义在本轮升级过：`visibleRect` 从"拖动的每帧门禁"降级为
-     * 「全部收回」按钮与浮层提示的数据源。
+     * 可见范围只用于提示；显式收回通过聚焦当前构图实现。
      *
      * 拖动不读可见范围，是为了满足 Issue #20 的「器材可以自由拖动到任意位置」；
      * 但"器材被拖到屏幕外之后能一键找回来"这条能力必须保留，
-     * 所以 `visibleRect` 与 `rescueAllComponents` 都还在。
+     * 不得让恢复操作改变器材之间的相对位置。
      */
     const source = await import('node:fs').then((fs) =>
       fs.readFileSync(new URL('./CompetitorScene.tsx', import.meta.url), 'utf8'),
     )
-    expect(source, '「全部收回」入口没了，学生把器材拖出屏幕后找不回来').toContain('rescueAllComponents')
-    expect(source).toContain('visibleRect()')
+    expect(source, '「全部收回」入口没了，学生把器材拖出屏幕后找不回来').toContain('把拖出屏幕的器材收回可见范围')
     const dragSource = await import('node:fs').then((fs) =>
       fs.readFileSync(new URL('./useLabLayoutDrag.ts', import.meta.url), 'utf8'),
     )

@@ -9,9 +9,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import { renderToString } from 'react-dom/server'
-import { AmmeterScene } from './CompetitorScene'
+import { AmmeterScene } from './CompetitorScene.tsx'
 import { createAmmeterState, type AmmeterLabState } from './controller'
 import { LAB_COMPONENT_IDS, createDefaultLayout, fitLayoutToStage, terminalPosition, usableStageRect } from './layout'
+import { createReferenceLayout } from './referenceLayout'
 import type { AmmeterTerminalId } from './definition'
 
 const noop = () => {}
@@ -50,9 +51,11 @@ describe('器材可任意拖动', () => {
 
   it('器材拖动手柄带无障碍标签，键盘/读屏用户也能识别', () => {
     const html = render()
-    for (const label of ['电源 E1', '开关 S₁', '开关 S₂', '灯泡 L₁', '电流表 A1']) {
-      expect(html).toContain(`拖动${label}到任意位置`)
+    for (const label of ['灯泡 L₁']) {
+      expect(html).toContain(`选择${label}（点击选中，拖动摆位）`)
     }
+    expect(html).toContain('选择电源 E1（点击选中，拖动摆位）')
+    expect(html).toContain('选择电流表（点击操作，拖动摆位）')
   })
 
   it('拖动命中区是「可移动」光标（视觉上提示器材可拖）', () => {
@@ -63,14 +66,14 @@ describe('器材可任意拖动', () => {
   it('提供「复位摆位」入口，可把器材恢复到原始构图', () => {
     const html = render()
     expect(html).toContain('复位器材摆位')
-    expect(html).toContain('复位摆位')
+    expect(html).toContain('复位器材摆位</span>')
   })
 
-  it('画布上给出「器材可拖 / 导线可弯折」的操作提示', () => {
+  it('移除左上使用说明，器材和导线的拖动热区保留', () => {
     const html = render()
-    expect(html).toContain('全屏画布任意摆放')
-    expect(html).toContain('拖导线中点可弯折')
-    expect(html).toContain('拖接线柱接导线')
+    expect(html).not.toContain('全屏画布任意摆放')
+    expect(html).not.toContain('拖导线中点可弯折')
+    expect(html).not.toContain('拖接线柱接导线')
   })
 })
 
@@ -111,8 +114,9 @@ describe('器材名称与数字不可被选中', () => {
     expect(html).toContain('E1</text>')
     expect(html).toContain('L1</text>')
     expect(html).toContain('S1</text>')
-    expect(html).toContain('0.6A</text>')
-    expect(html).toContain('3A</text>')
+    expect(html).toContain('/physics/ammeter/ammeter.png')
+    expect(html).toContain('电流表 0.6A 接线柱')
+    expect(html).toContain('电流表 3A 接线柱')
     // 场景内任何位置都不得显式放开选中（例如给 <text> 加 select-text 反悔）
     expect(html).not.toContain('select-text')
   })
@@ -190,7 +194,7 @@ describe('接线柱拉线能力不退化', () => {
      * 所以断言必须与**同一个变换**对齐，不能假定"布局坐标 = 渲染坐标"。
      * 这里直接用场景导出的摆放函数算出期望坐标，保证判据跟的是真实实现。
      */
-    const layout = fitLayoutToStage(createDefaultLayout(), stageRectForTest(960, 540))
+    const layout = fitLayoutToStage(createReferenceLayout(), stageRectForTest(960, 540))
     for (const id of ['battery+', 'battery-', 'ammeter-3'] as AmmeterTerminalId[]) {
       const point = terminalPosition(layout, id)
       // 立柱绘制半径为 19 的命中圆，其 cx 由接线柱 x 推导
@@ -198,9 +202,11 @@ describe('接线柱拉线能力不退化', () => {
     }
   })
 
-  it('开关闭合时接线柱命中区被标记为不可拖（沿用实验规范）', () => {
+  it('开关闭合时接线柱仍可点选和开始拖动，拖动不自动断电', () => {
     const html = render({ ...createAmmeterState(), switchClosed: true })
-    expect(html).toContain('cursor-not-allowed')
+    const terminals = html.match(/<ellipse[^>]*data-terminal=[^>]*>/g) ?? []
+    expect(terminals).toHaveLength(11)
+    for (const terminal of terminals) expect(terminal).toContain('cursor-crosshair')
   })
 
   it('器材本体命中区不会盖住接线柱（本体命中区垫在器材下方）', () => {
@@ -218,20 +224,20 @@ describe('拖动与接线的命中优先级（浏览器实测暴露的三个缺�
   it('器材本体命中区画在器材之后（否则器材自身零件会截走指针，表现为拖不动）', () => {
     const html = render()
     // 器材的可见零件先于拖动命中区渲染
-    const ammeterBody = html.indexOf('translate(')
+    const ammeterBody = html.indexOf('data-apparatus="A1"')
     const dragHandle = html.indexOf('data-component-drag="A1"')
     expect(ammeterBody).toBeGreaterThan(-1)
     expect(dragHandle).toBeGreaterThan(-1)
     // A1 的拖动命中区必须排在器材本体之后
-    const ammeterDial = html.indexOf('0.6A</text>')
+    const ammeterDial = html.indexOf('/physics/ammeter/ammeter.png')
     expect(ammeterDial).toBeGreaterThan(-1)
     expect(dragHandle).toBeGreaterThan(ammeterDial)
   })
 
   it('导线画在器材之前（否则导线会盖住表盘与开关，读数看不清）', () => {
     const html = render(stateWithWires())
-    const wireLayer = html.indexOf('stroke="#c0392b"')
-    const ammeterDial = html.indexOf('0.6A</text>')
+    const wireLayer = html.indexOf('data-wire=')
+    const ammeterDial = html.indexOf('/physics/ammeter/ammeter.png')
     expect(wireLayer).toBeGreaterThan(-1)
     expect(ammeterDial).toBeGreaterThan(-1)
     expect(wireLayer).toBeLessThan(ammeterDial)
@@ -246,9 +252,10 @@ describe('拖动与接线的命中优先级（浏览器实测暴露的三个缺�
     expect(terminalKnob).toBeGreaterThan(dragHandles)
   })
 
-  it('底部读数条不会吞掉其下方器材的拖动（不拦截指针事件传递到画布）', () => {
+  it('底部读数与快捷操作已移除，画布仍保留悬浮按钮的平移保护', () => {
     const html = render()
-    // 读数条标记为画布遮挡块，且其容器本身允许指针穿透到下层画布
+    expect(html).not.toContain('电表读数')
+    expect(html).not.toContain('选择量程')
     expect(html).toContain('data-canvas-pan-block')
   })
 })
@@ -266,7 +273,7 @@ describe('相机变换下的拖动（缩放/平移后仍要能正确拖动）', 
     const canvasDelta = screenDelta / scale
     expect(canvasDelta).toBe(50)
     // 场景确实读取相机参数
-    expect(render()).toContain('复位视角')
+    expect(render()).toContain('滚轮缩放')
   })
 })
 

@@ -5,67 +5,81 @@
  *   · 顶部深色标题栏（左侧工具条：保存/清空/重置/撤销/恢复/设置，电路图/表格；右侧协作入口）
  *   · 深色画布（#343941），实物器材 + 手绘红色导线，可自由拖动接线柱连线
  *   · 左上角「转电路图」浮层按钮，一键切换实物图 / 原理图
- *   · 右上角「边做边看 / 实验报告 / 交互热点」，左下角「电与磁 / 缩放 / 画笔 / 裁剪 / 放大 / 文字」
+ *   · 右上角「实验报告 / 推送学生端打开」
  *   · 右侧「实验报告」抽屉：目的/原理/器材/步骤/结论/补充（文案取自竞品原文）
- *   · 底部读数条：实时读数、闭合开关、量程切换、灯泡状态
  */
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState, type PointerEvent } from 'react'
 import {
-  Aperture,
-  BookOpen,
   FileText,
-  Gauge,
   Grid3x3,
-  LayoutGrid,
-  PlayCircle,
+  MonitorUp,
+  RotateCcw,
+  Unplug,
 } from 'lucide-react'
 import type { TextbookPhysicsExperiment } from '../../curriculum/types'
 import PhysicsLabShell, { type PhysicsLabSceneProps } from '../../runtime/PhysicsLabShell'
 import InfiniteCanvas, {
   PERSPECTIVE_DEPTH,
-  STAGE_TILT_DEG,
 } from '../../runtime/immersive/InfiniteCanvas'
+import { ImmersiveToolbarButton, ImmersiveToolbarSlot } from '../../runtime/immersive/ImmersiveLabStage'
 import { projectPerspective } from '../../runtime/immersive/canvas'
 import { usePointerDrag } from '../../runtime/usePointerDrag'
 import type { LabAction, Position } from '../../runtime/types'
 import {
   CIRCUIT_TERMINALS,
-  RANGE_SPEC,
-  isTerminalDraggable,
   type AmmeterTerminalId,
   type CircuitTerminalId,
 } from './definition'
-import { ammeterController, type AmmeterLabState } from './controller'
-import { AmmeterA1, BatteryHolderE1, KnifeSwitch, LampHolderL1, TerminalPost } from './CompetitorParts'
-import { COMPETITOR_BACKGROUND, COMPETITOR_TEXT_PANEL } from './competitorScene'
+import { practiceController, evaluatePracticeCircuit, type PracticeState as AmmeterLabState } from './practiceController'
+import { SOURCE_DAMAGE_CURRENT, SOURCE_DAMAGE_DELAY, METER_DAMAGE_DELAY } from './freeCircuit'
+import { currentWireDirections } from './currentFlow'
+import type { CircuitEdge } from './controller'
+import SwitchHandle from './SwitchHandle'
+import { nearestTerminal, terminalAt } from './terminalHit'
+import { AmmeterA1, BatteryHolderE1, KnifeSwitch, LampHolderL1, DetachedLampBulb, PART_GEOMETRY } from './RealisticParts'
+import { switchBodyBounds } from './switchGeometry'
+import { createReferenceLayout } from './referenceLayout'
+import { exposedWireEnd, METAL_POST_GEOMETRY, wireAppearance } from './wireAppearance'
+import WireBareEnd from './WireBareEnd'
+import { COMPETITOR_BACKGROUND } from './competitorScene'
 import { TERMINAL_DRAW_ORDER } from './competitorGeometry'
 import {
   COMPONENT_HIT_RADIUS,
   COMPONENT_LABELS,
   LAB_COMPONENT_IDS,
+  TERMINAL_OWNER,
   componentBodyRect,
-  createDefaultLayout,
   fitLayoutToStage,
   fitPaddingWithinSafeArea,
   layoutBounds,
   layoutOutOfControls,
   offCanvasComponents,
   perspectiveStageWithin,
-  rescueAllComponents,
   resolveViewport,
   screenToCanvasWithinViewport,
   terminalPosition,
   usableStageRect,
   visibleScreenArea,
   wireHandlePosition,
-  wirePathD,
+  wireKey,
+  wirePathPoints,
   type CanvasViewport,
-  type CanvasVisibleRect,
   type LabComponentId,
   type LabLayout,
 } from './layout'
 import { useLabLayoutDrag } from './useLabLayoutDrag'
 import { AmmeterSchematic } from './SchematicView'
+import ReportDrawer from './ReportDrawer'
+import MeterInspector, { MeterCurrentGraph } from './MeterInspector'
+import { DEFAULT_METER_SETTINGS } from './meterSettings'
+import SwitchInspector from './SwitchInspector'
+import LampInspector from './LampInspector'
+import { lampSettingsFor } from './lampSettings'
+import BatteryInspector from './BatteryInspector'
+import { batterySettingsFor } from './batterySettings'
+import { switchSettingsFor } from './switchSettings'
+
+const AmmeterModel3D = lazy(() => import('./AmmeterModel3D'))
 
 
 /**
@@ -76,7 +90,7 @@ import { AmmeterSchematic } from './SchematicView'
  */
 function perspectiveOf(width: number, height: number) {
   return {
-    tilt: STAGE_TILT_DEG,
+    tilt: 0,
     perspective: PERSPECTIVE_DEPTH,
     originX: width * 0.5,
     originY: height * 0.58,
@@ -112,7 +126,7 @@ function viewportHeight(): number {
  * 因此"摆到哪"与"判据说在哪"永远一致。
  */
 function initialLayoutFor(width: number, height: number): LabLayout {
-  const fitted = fitLayoutToStage(createDefaultLayout(), usableStageRect(width, height))
+  const fitted = fitLayoutToStage(createReferenceLayout(), usableStageRect(width, height))
   const viewport = resolveViewport(visibleScreenArea(width, height), { scale: 1, x: 0, y: 0 }, perspectiveOf(width, height))
   if (viewport === null) return fitted
   const stage = perspectiveStageWithin(viewport.camera, viewport.perspective ?? {
@@ -145,28 +159,36 @@ function initialLayoutFor(width: number, height: number): LabLayout {
 }
 
 /** 聚焦测量的取样点：每件器材本体外接矩形的四角 */
-function probesOf(layout: LabLayout): Position[] {
+function probesOf(layout: LabLayout, ids: readonly LabComponentId[] = LAB_COMPONENT_IDS): Position[] {
   const points: Position[] = []
-  for (const id of LAB_COMPONENT_IDS) {
-    const rect = componentBodyRect(id, layout.components[id])
-    points.push(
+  for (const id of ids) {
+    const center = layout.components[id]
+    const rect = componentBodyRect(id, center)
+    const angle = (layout.componentAngles?.[id] ?? 0) * Math.PI / 180
+    points.push(...[
       { x: rect.left, y: rect.top },
       { x: rect.right, y: rect.top },
       { x: rect.left, y: rect.bottom },
       { x: rect.right, y: rect.bottom },
-    )
+    ].map(point => ({
+      x: center.x + (point.x - center.x) * Math.cos(angle) - (point.y - center.y) * Math.sin(angle),
+      y: center.y + (point.x - center.x) * Math.sin(angle) + (point.y - center.y) * Math.cos(angle),
+    })))
   }
   return points
 }
 
 /** 竞品画布上的器材参考点（世界坐标已映射到视图坐标） */
 const canvasBackground = COMPETITOR_BACKGROUND
-const chromeBorder = '#33383f'
 
 function isPosition(value: unknown): value is Position {
   if (typeof value !== 'object' || value === null) return false
   const point = value as Partial<Position>
   return Number.isFinite(point.x) && Number.isFinite(point.y)
+}
+
+function terminalLabel(id: CircuitTerminalId): string {
+  return id === 'lamp2-a' ? '开关 S₂ 左接线柱' : id === 'lamp2-b' ? '开关 S₂ 右接线柱' : CIRCUIT_TERMINALS[id].label
 }
 
 function terminalHasWire(state: AmmeterLabState, id: CircuitTerminalId): boolean {
@@ -178,6 +200,9 @@ interface TerminalProps {
   state: AmmeterLabState
   /** 接线柱坐标（由布局推导，拖动器材时会跟着移动） */
   point: { x: number; y: number }
+  selected: boolean
+  angle?: number
+  loose?: boolean
   drag: {
     onPointerDown(event: PointerEvent<SVGElement>): void
     onPointerMove(event: PointerEvent<SVGElement>): void
@@ -192,31 +217,38 @@ interface TerminalProps {
  * 坐标不再写死，而是由 layout.terminalPosition 推导 —— 器材被拖到任何位置，
  * 它的接线柱都与器材本体一起移动，导线端点也随之跟随，绝不会"线和器材脱开"。
  */
-function CompetitorTerminal({ id, state, point, drag }: TerminalProps) {
-  const terminal = CIRCUIT_TERMINALS[id]
+function CompetitorTerminal({ id, state, point, selected, drag, angle = 0, loose = false }: TerminalProps) {
+  const label = terminalLabel(batterySettingsFor(state).reversed && id.startsWith('battery') ? id === 'battery+' ? 'battery-' : 'battery+' : id)
   const connected = terminalHasWire(state, id)
-  const disabled = !isTerminalDraggable(id, state)
+  const switchPost = id === 'switch-a' || id === 'switch-b' || id === 'lamp2-a' || id === 'lamp2-b'
   const handlers = {
-    onPointerDown: (event: PointerEvent<SVGElement>) => { if (!disabled) drag.onPointerDown(event) },
-    onPointerMove: (event: PointerEvent<SVGElement>) => { if (!disabled) drag.onPointerMove(event) },
-    onPointerUp: (event: PointerEvent<SVGElement>) => { if (!disabled) drag.onPointerUp(event) },
-    onPointerCancel: (event: PointerEvent<SVGElement>) => { if (!disabled) drag.onPointerCancel(event) },
+    onPointerDown: (event: PointerEvent<SVGElement>) => { if (event.button === 0) drag.onPointerDown(event) },
+    onPointerMove: drag.onPointerMove,
+    onPointerUp: drag.onPointerUp,
+    onPointerCancel: drag.onPointerCancel,
   }
   return (
     <g>
-      <TerminalPost x={point.x} y={point.y} polarity={terminal.polarity} connected={connected} />
-      <circle
+      <ellipse
         data-hit-target="ammeter-terminal-knob"
+        data-terminal={loose ? undefined : id}
+        data-loose-terminal={loose ? id : undefined}
+        aria-pressed={selected}
+        stroke={selected ? '#f0bd56' : 'none'}
+        strokeWidth="1.5"
         cx={point.x}
-        cy={point.y - 12}
-        r="19"
+        // 竖椭圆覆盖旋帽和柱脚，避免横向扩大热区遮挡握柄。
+        cy={point.y + (switchPost && !loose ? 6 : 0)}
+        rx={loose ? 16 : switchPost ? 9 : 15}
+        ry={loose ? 10 : switchPost ? 12 : 15}
+        transform={angle && !loose ? `rotate(${angle} ${point.x} ${point.y})` : undefined}
         fill="transparent"
-        className={disabled ? 'cursor-not-allowed' : 'cursor-crosshair'}
+        className="cursor-crosshair"
         role="button"
         tabIndex={0}
-        aria-label={terminal.label}
+        aria-label={loose ? `悬空导线端 ${label}` : label}
         {...handlers}
-      />
+      ><title>{`${label} · ${connected ? '拖动重接 · 多根线先选线 · Shift拖动新增' : '拖动以接线'}`}</title></ellipse>
     </g>
   )
 }
@@ -228,7 +260,7 @@ function CompetitorTerminal({ id, state, point, drag }: TerminalProps) {
  * 否则「想接线」会变成「把器材拖走」。指针事件里还会再判一次是否落在接线柱上，
  * 命中区只是第一层保险。
  */
-function ComponentDragHandle({ id, layout, drag }: {
+function ComponentDragHandle({ id, layout, drag, onActivate }: {
   id: LabComponentId
   layout: LabLayout
   drag: {
@@ -237,24 +269,37 @@ function ComponentDragHandle({ id, layout, drag }: {
     onPointerUp(event: PointerEvent<SVGElement>): void
     onPointerCancel(event: PointerEvent<SVGElement>): void
   }
+  onActivate?(): void
 }) {
   const center = layout.components[id]
+  const gesture = useRef({ x: 0, y: 0, moved: false })
   return (
     <g
       data-component-drag={id}
       role="button"
       tabIndex={0}
-      aria-label={`拖动${COMPONENT_LABELS[id]}到任意位置`}
+      aria-label={onActivate ? id === 'A1' ? '选择电流表（点击操作，拖动摆位）' : `选择${COMPONENT_LABELS[id]}（点击选中，拖动摆位）` : `拖动${COMPONENT_LABELS[id]}到任意位置`}
       className="cursor-move"
-      {...drag}
+      onPointerDown={(event) => {
+        gesture.current = { x: event.clientX, y: event.clientY, moved: false }
+        drag.onPointerDown(event)
+      }}
+      onPointerMove={(event) => {
+        if (Math.hypot(event.clientX - gesture.current.x, event.clientY - gesture.current.y) > 4) gesture.current.moved = true
+        drag.onPointerMove(event)
+      }}
+      onPointerUp={drag.onPointerUp}
+      onPointerCancel={(event) => { gesture.current.moved = true; drag.onPointerCancel(event) }}
+      onClick={(event) => { if (event.button === 0 && !gesture.current.moved) onActivate?.() }}
+      onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); onActivate?.() } }}
     >
       {/* 命中区：与器材本体同尺寸的透明矩形（不遮挡接线柱） */}
       <rect
+        transform={layout.componentAngles?.[id] ? `rotate(${layout.componentAngles[id]} ${center.x} ${center.y})` : undefined}
         x={center.x - COMPONENT_HIT_RADIUS[id].rx}
         y={center.y - COMPONENT_HIT_RADIUS[id].ry}
         width={COMPONENT_HIT_RADIUS[id].rx * 2}
         height={COMPONENT_HIT_RADIUS[id].ry * 2}
-        rx={12}
         fill="transparent"
       />
       {/*
@@ -269,7 +314,7 @@ function ComponentDragHandle({ id, layout, drag }: {
 }
 
 /** 导线折点手柄：拖动即可像真导线一样任意弯折（端点仍牢牢接在接线柱上） */
-function WireBendHandle({ from, to, layout, active, drag }: {
+function WireBendHandle({ from, to, layout, active, drag, onSelect, onDisconnect }: {
   from: AmmeterTerminalId
   to: AmmeterTerminalId
   layout: LabLayout
@@ -280,16 +325,22 @@ function WireBendHandle({ from, to, layout, active, drag }: {
     onPointerUp(event: PointerEvent<SVGElement>): void
     onPointerCancel(event: PointerEvent<SVGElement>): void
   }
+  onSelect(): void
+  onDisconnect(): void
 }) {
   const handle = wireHandlePosition(layout, from, to)
   return (
     <g
       data-hit-target="wire-bend-handle"
+      data-wire-hit={wireKey(from, to)}
       role="button"
       tabIndex={0}
-      aria-label={`弯折${CIRCUIT_TERMINALS[from].label}到${CIRCUIT_TERMINALS[to].label}的导线`}
+      aria-label={`弯折${terminalLabel(from)}到${terminalLabel(to)}的导线`}
       className="cursor-grab"
       {...drag}
+      onClick={onSelect}
+      onDoubleClick={onDisconnect}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelect() } }}
     >
       <circle cx={handle.x} cy={handle.y} r="18" fill="transparent" />
       <circle
@@ -299,7 +350,7 @@ function WireBendHandle({ from, to, layout, active, drag }: {
         fill={active ? '#f0c86a' : '#e8756a'}
         stroke="#2b1410"
         strokeWidth="1.2"
-        opacity={active ? 1 : 0.72}
+        opacity={active ? 1 : 0}
         pointerEvents="none"
       />
     </g>
@@ -307,12 +358,10 @@ function WireBendHandle({ from, to, layout, active, drag }: {
 }
 
 interface CompetitorSceneProps extends PhysicsLabSceneProps<AmmeterLabState> {
-  onTogglePanel(): void
   onOpenReport(): void
-  panelOpen: boolean
 }
 
-function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, panelOpen }: CompetitorSceneProps) {
+function CompetitorSceneCanvas({ state, dispatch, onOpenReport }: CompetitorSceneProps) {
   const stageRef = useRef<HTMLDivElement>(null)
   const svgRef = useRef<SVGSVGElement>(null)
   const cameraRef = useRef<{ scale: number; x: number; y: number }>({ scale: 1, x: 0, y: 0 })
@@ -325,8 +374,56 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
   const [stageSize, setStageSize] = useState({ width: 0, height: 0 })
   /** 舞台尺寸的**回调可读**镜像（相机变更回调在事件时机触发，不能读 state） */
   const stageSizeRef = useRef({ width: 0, height: 0 })
-  const [preview, setPreview] = useState<{ from: AmmeterTerminalId; position: Position } | null>(null)
+  const [preview, setPreview] = useState<{ from: AmmeterTerminalId; position: Position; edge?: CircuitEdge; endpoint: AmmeterTerminalId } | null>(null)
+  const wireGesture = useRef<{ start: Position; started: boolean } | null>(null)
+  const [selectedTerminal, setSelectedTerminal] = useState<AmmeterTerminalId | null>(null)
+  const [lampSelected, setLampSelected] = useState(false)
+  const lampSettings = lampSettingsFor(state)
+  const [bulbPosition, setBulbPosition] = useState<Position | null>(null)
+  const bulbGesture = useRef<{ pointerId: number; offset: Position } | null>(null)
+  const [batterySelected, setBatterySelected] = useState(false)
+  const batterySettings = batterySettingsFor(state)
+  const [selectedSwitch, setSelectedSwitch] = useState<'S1' | 'S2' | null>(null)
+  const s1Settings = switchSettingsFor(state, 'S1')
+  const s2Settings = switchSettingsFor(state, 'S2')
+  const removedSwitches = useMemo(() => (['S1', 'S2'] as const).filter(id => id === 'S1' ? s1Settings.removed : s2Settings.removed), [s1Settings.removed, s2Settings.removed])
+  const removedComponents = useMemo<LabComponentId[]>(() => [...removedSwitches, ...(batterySettings.removed ? ['E1' as const] : []), ...(lampSettings.removed ? ['L1' as const] : [])], [removedSwitches, batterySettings.removed, lampSettings.removed])
+  const [wireHint, setWireHint] = useState<string | null>(null)
   const [showSchematic, setShowSchematic] = useState(false)
+  const contactClipId = useId()
+  const wireMetalId = useId()
+  const [selectedWire, setSelectedWire] = useState<string | null>(null)
+  const [meterSelected, setMeterSelected] = useState(false)
+  const [modelOpen, setModelOpen] = useState(false)
+  if (selectedWire !== null && !state.edges.some((edge) => wireKey(edge.from, edge.to) === selectedWire)) setSelectedWire(null)
+
+  // 文档级监听包含外壳标题/工具栏；编辑文字时不接管删除键。
+  useEffect(() => {
+    function clearOutsideWire(event: globalThis.PointerEvent) {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-wire-hit],[data-terminal],[data-loose-terminal]')) setSelectedWire(null)
+      if (!(event.target instanceof Element) || !event.target.closest('[data-terminal],[data-loose-terminal]')) setSelectedTerminal(null)
+      if (!(event.target instanceof Element) || !event.target.closest('[data-component-drag="S1"],[data-component-drag="S2"],[data-switch-ui]')) setSelectedSwitch(null)
+      if (!(event.target instanceof Element) || !event.target.closest('[data-component-drag="E1"],[data-battery-ui]')) setBatterySelected(false)
+      if (!(event.target instanceof Element) || !event.target.closest('[data-component-drag="L1"],[data-lamp-ui],[data-detached-bulb]')) setLampSelected(false)
+      setWireHint(null)
+      if (!(event.target instanceof Element) || !event.target.closest('[data-component-drag="A1"],[data-meter-ui]')) setMeterSelected(false)
+    }
+    function deleteWire(event: KeyboardEvent) {
+      if (event.key !== 'Delete' && event.key !== 'Backspace') return
+      if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) return
+      const edge = state.edges.find((edge) => wireKey(edge.from, edge.to) === selectedWire)
+      if (!edge) return
+      event.preventDefault()
+      dispatch({ type: 'disconnect', payload: edge }, 'disconnect-wire')
+      setSelectedWire(null)
+    }
+    document.addEventListener('pointerdown', clearOutsideWire, true)
+    document.addEventListener('keydown', deleteWire)
+    return () => {
+      document.removeEventListener('pointerdown', clearOutsideWire, true)
+      document.removeEventListener('keydown', deleteWire)
+    }
+  }, [selectedWire, state.edges, dispatch])
   /**
    * 学生是否动过构图（动过就不再随窗口缩放自动重排，避免抹掉学生摆好的位置）。
    *
@@ -341,9 +438,10 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
    * 所以初始构图要等比缩放 + 居中摆进舞台（`fitLayoutToStage`）。
    * 之后学生可以把每件器材拖到屏幕任意位置、把每根导线弯成任意形状。
    */
-  const [layout, setLayout] = useState<LabLayout>(() =>
+  const [baseLayout, setLayout] = useState<LabLayout>(() =>
     initialLayoutFor(viewportWidth(), viewportHeight()),
   )
+  const layout = useMemo<LabLayout>(() => ({ ...baseLayout, componentAngles: { S1: s1Settings.angle, S2: s2Settings.angle, E1: batterySettings.angle, L1: lampSettings.angle }, componentReversed: { S1: s1Settings.reversed, S2: s2Settings.reversed, L1: lampSettings.reversed } }), [baseLayout, s1Settings.angle, s2Settings.angle, batterySettings.angle, s1Settings.reversed, s2Settings.reversed, lampSettings.angle, lampSettings.reversed])
   /**
    * 舞台尺寸变化时，把**还没被学生动过**的构图重新摆一次。
    *
@@ -363,11 +461,35 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
    */
   const [componentProbes, setComponentProbes] = useState(() => probesOf(layout))
 
-  const activeTrial = state.activeTrialId === null ? undefined : state.trials.find((trial) => trial.id === state.activeTrialId)
-  const reading = activeTrial?.reading ?? 0
-  const lit = state.switchClosed && reading > 0
+  // 拉离已有端点时，该导线在预览期间已经断开；取消会把它放回原接线柱。
+  const physicalState = preview?.edge ? { ...state, edges: state.edges.filter(edge => wireKey(edge.from, edge.to) !== wireKey(preview.edge!.from, preview.edge!.to)) } : state
+  const live = evaluatePracticeCircuit(physicalState)
+  const physicsDispatch = useRef(dispatch)
+  useEffect(() => { physicsDispatch.current = dispatch }, [dispatch])
+  const lampOvervoltage = !state.lampDamaged && !state.bulbDetached && !lampSettings.removed && !lampSettings.broken && !lampSettings.shorted && Math.abs(live.lampVoltage) > lampSettings.burnVoltage
+  useEffect(() => {
+    if (!lampOvervoltage) return
+    const timer = window.setTimeout(() => physicsDispatch.current({ type: 'damageLamp' }, 'lamp-overvoltage'), 0)
+    return () => window.clearTimeout(timer)
+  }, [lampOvervoltage])
+  const sourceOverloaded = live.sourceCurrent > SOURCE_DAMAGE_CURRENT
+  useEffect(() => {
+    if (!sourceOverloaded) return
+    const timer = window.setTimeout(() => physicsDispatch.current({ type: 'damageSource' }, 'source-overheat'), SOURCE_DAMAGE_DELAY)
+    return () => window.clearTimeout(timer)
+  }, [sourceOverloaded])
+  const meterOverloaded = live.meterLoad > 1
+  useEffect(() => {
+    if (!meterOverloaded) return
+    const timer = window.setTimeout(() => physicsDispatch.current({ type: 'damageMeter' }, 'meter-overheat'), METER_DAMAGE_DELAY)
+    return () => window.clearTimeout(timer)
+  }, [meterOverloaded])
+  const wireDirections = currentWireDirections(physicalState)
+  const reading = live.current
+  const meterSettings = state.meterSettings ?? DEFAULT_METER_SETTINGS
+  const lit = live.lampLit
   const s1Closed = state.switchClosed
-  const s2Closed = state.switchClosed
+  const s2Closed = Boolean(state.bypassClosed)
 
   /**
    * 指针坐标 → 画布坐标。
@@ -376,7 +498,7 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
    * 曾在 1688×841 下实测到拖动映射用线性反算、可见范围用透视反算，
    * 结果拖到底时器材**始终探出 7～8px**，而判据又只看中心，于是既看不见也不收回。
    * 现在这里直接复用 `resolveViewport` + `screenToCanvasWithinViewport`，
-   * 与 `visibleRect()` 共用同一组 screen/camera/perspective，不可能再错配。
+   * 与可见范围共用同一组 screen/camera/perspective，不可能再错配。
    */
   /**
    * 可见范围的**唯一计算入口**（事件回调用，读 ref）。
@@ -405,58 +527,59 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
   }, [layout])
 
   /** 最近的接线柱（含坐标）：由布局推导，拖动器材后命中区同步移动 */
-  const nearestTerminalTo = useCallback((position: Position) => nearestTerminal(layoutRef.current, position), [])
+  const nearestTerminalTo = useCallback((position: Position) => nearestTerminal(layoutRef.current, position, state.meterRemoved, removedComponents), [state.meterRemoved, removedComponents])
 
   const pointerDrag = usePointerDrag({
     stageRef,
     positionFor: scenePositionFor,
     dispatch: (action: LabAction) => {
       const payload = action.payload as { subject?: unknown; position?: unknown } | undefined
-      const from = payload?.subject
-      if (action.type === 'dragStart' && typeof from === 'string' && from in CIRCUIT_TERMINALS && isPosition(payload?.position)) {
-        setPreview({ from: from as AmmeterTerminalId, position: payload.position })
-        dispatch({ type: 'dragStart', payload: { subject: from } }, 'start-wire')
+      const subject = payload?.subject as { terminal: AmmeterTerminalId; edge?: CircuitEdge } | undefined
+      const endpoint = subject?.terminal
+      const edge = subject?.edge
+      if (action.type === 'dragStart' && endpoint && isPosition(payload?.position)) {
+        wireGesture.current = { start: payload.position, started: false }
         return
       }
-      if (action.type === 'dragMove' && isPosition(payload?.position)) {
+      if (action.type === 'dragMove' && endpoint && isPosition(payload?.position)) {
+        const gesture = wireGesture.current
         const position = payload.position
-        setPreview((current) => (current ? { ...current, position } : current))
+        if (!gesture) return
+        if (!gesture.started) {
+          // 区分点选和拉线：超过屏幕 4px 才开始预览，不因点击或抖动改变实验。
+          if (Math.hypot(position.x - gesture.start.x, position.y - gesture.start.y) * cameraRef.current.scale <= 4) return
+          gesture.started = true
+          dispatch({ type: 'dragStart', payload: { subject: endpoint } }, 'start-wire')
+        }
+        const from = edge ? edge.from === endpoint ? edge.to : edge.from : endpoint
+        setPreview({ from, position, edge, endpoint })
         return
       }
       if (action.type === 'dragCancel') {
+        const started = wireGesture.current?.started
+        wireGesture.current = null
+        if (!started) return
         setPreview(null)
-        dispatch({ type: 'dragCancel', payload: { subject: from } }, 'cancel-wire')
+        dispatch({ type: 'dragCancel', payload: { subject: endpoint } }, 'cancel-wire')
         return
       }
       if (action.type === 'dragEnd') {
+        const started = wireGesture.current?.started
+        wireGesture.current = null
+        if (!started) return
         setPreview(null)
-        const target = isPosition(payload?.position) ? terminalAt(layoutRef.current, payload.position) : null
-        if (typeof from !== 'string' || target === null || target === from) {
-          dispatch({ type: 'dragCancel', payload: { subject: from } }, 'cancel-wire')
+        const target = isPosition(payload?.position) ? terminalAt(layoutRef.current, payload.position, state.meterRemoved, removedComponents) : null
+        if (!endpoint || target === null || target === endpoint) {
+          dispatch({ type: 'dragCancel', payload: { subject: endpoint } }, 'cancel-wire')
           return
         }
-        dispatch({ type: 'connect', payload: { from, to: target } }, 'connect-wire')
+        if (edge) dispatch({ type: 'rewire', payload: { edge, endpoint, target } }, 'rewire-wire')
+        else dispatch({ type: 'connect', payload: { from: endpoint, to: target } }, 'connect-wire')
       }
     },
   })
 
   const pointerEvent = (event: PointerEvent<SVGElement>) => event as unknown as PointerEvent<HTMLElement>
-
-  /**
-   * 当前可见的画布矩形（布局坐标）。
-   *
-   * 全屏无限画布的判定基础：屏幕上是整块画布，器材放到哪都看得见。
-   * 这里把「舞台可视区域」减去顶部悬浮标题条与底部读数条的安全边距，
-   * 再用相机参数反算成布局坐标，交给拖动逻辑做不变量校验。
-   */
-  const visibleRect = useCallback((): CanvasVisibleRect => {
-    const stage = stageRef.current
-    if (stage === null) return null
-    const rect = stage.getBoundingClientRect()
-    return viewportOf(rect.width, rect.height, cameraRef.current)?.visible ?? null
-    // visibleRect 只在事件回调里被调用（松手收回）。
-    // 渲染期用的是下面的 visibleRectState（由纯状态派生，不碰 ref）。
-  }, [viewportOf])
 
   /**
    * 测量舞台尺寸。
@@ -515,8 +638,7 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
   /**
    * 渲染期读的可见矩形快照。
    *
-   * 为什么要有这一层：`visibleRect()` 需要读 stageRef / cameraRef，
-   * 而 React 禁止在渲染期访问 ref。
+   * 渲染期从舞台尺寸和相机状态计算提示，避免读取 ref。
    *
    * 实现上刻意**不用 effect + setState**（那会触发级联渲染，被
    * `react-hooks` 明确劝阻），而是把「相机快照」也提成 state：
@@ -570,8 +692,8 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
    * 器材可以停在屏幕外，学生再平移画布找回来（数学上必然找得到，
    * 因为相机平移已经不再有上限）。
    *
-   * 这三样东西仍然保留在场景里，只服务两件**不干扰拖动**的事：
-   *   ① `visibleRect` / `screenOverflowCheck` → 「全部收回」按钮与浮层提示；
+   * 可见范围与构图计算只服务两件**不干扰拖动**的事：
+   *   ① `visibleRectState` → 屏幕外器材提示；显式收回只重新聚焦构图；
    *   ② `settleLayoutForCamera` → 窗口尺寸变化后的构图重排。
    */
   const labDrag = useLabLayoutDrag({
@@ -579,20 +701,55 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
     setLayout: (next) => {
       // 学生亲手改过构图 → 之后窗口缩放不再自动重排
       setTouched(true)
-      setLayout(next)
+      setLayout(current => typeof next === 'function' ? next({ ...current, componentAngles: layout.componentAngles, componentReversed: layout.componentReversed }) : next)
     },
     nearestTerminal: nearestTerminalTo,
     scenePosition: scenePositionFor as (event: PointerEvent<SVGElement>) => Position | null,
   })
 
   /** 拖出屏幕的器材（实时给出「全部收回」入口，避免学生以为器材丢了） */
-  const strayComponents = offCanvasComponents(layout, visibleRectState)
+  const strayComponents = offCanvasComponents(layout, visibleRectState).filter((id) => (id !== 'A1' || !state.meterRemoved) && !removedComponents.includes(id))
+
+  // 视野过小时移动器材会把它们夹到同一点；重新聚焦保留摆放与接线。
+  function focusLayout(next: LabLayout) {
+    const ids = LAB_COMPONENT_IDS.filter(id => (id !== 'A1' || !state.meterRemoved) && !removedComponents.includes(id))
+    const points = probesOf(next, ids)
+    if (points.length === 0) return
+    setInitialBounds({
+      minX: Math.min(...points.map(point => point.x)), maxX: Math.max(...points.map(point => point.x)),
+      minY: Math.min(...points.map(point => point.y)), maxY: Math.max(...points.map(point => point.y)),
+    })
+    setComponentProbes(points)
+  }
+
+  const visibleEdges = preview?.edge ? state.edges.filter((edge) => wireKey(edge.from, edge.to) !== wireKey(preview.edge!.from, preview.edge!.to)) : state.edges
+  const wireVisuals = visibleEdges.map(edge => ({ edge, ...wireAppearance(layout, edge.from, edge.to) }))
+  const wireContactPoints = new Map(wireVisuals.flatMap(({ ends }) => ends.map(end => [end.terminal, end.center] as const)))
+  const previewEnd = preview ? exposedWireEnd(layout, preview.from, preview.position) : null
+  let previewPath = ''
+  if (preview) {
+    const anchor = previewEnd!.insulation
+    previewPath = `M ${anchor.x} ${anchor.y} L ${preview.position.x} ${preview.position.y}`
+    if (preview.edge) {
+      const points = wirePathPoints(layout, preview.edge.from, preview.edge.to)
+      if (points.length === 3) {
+        const oldEnd = terminalPosition(layout, preview.endpoint)
+        const control = points[1]
+        previewPath = `M ${anchor.x} ${anchor.y} Q ${control.x + (preview.position.x - oldEnd.x) / 2} ${control.y + (preview.position.y - oldEnd.y) / 2} ${preview.position.x} ${preview.position.y}`
+      }
+    }
+  }
 
   const ammeterPoint = layout.components.A1
   const lampPoint = layout.components.L1
+  const lampBounds = switchBodyBounds(lampPoint.x, lampPoint.y, lampSettings.angle, PART_GEOMETRY.lamp)
+  const detachedPoint = bulbPosition ?? { x: lampPoint.x, y: lampPoint.y - 30 }
   const s1Point = layout.components.S1
   const s2Point = layout.components.S2
   const batteryPoint = layout.components.E1
+  const batteryBounds = switchBodyBounds(batteryPoint.x, batteryPoint.y, batterySettings.angle, PART_GEOMETRY.battery)
+  const selectedSwitchSettings = selectedSwitch ? switchSettingsFor(state, selectedSwitch) : null
+  const selectedSwitchBounds = selectedSwitch ? switchBodyBounds(layout.components[selectedSwitch].x, layout.components[selectedSwitch].y, selectedSwitchSettings!.angle, PART_GEOMETRY.switch) : null
 
   return (
     /*
@@ -604,6 +761,8 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
       {/* 无限画布 + 3D 透视舞台：器材铺满整块屏幕 */}
       {/* SVG 只负责画器材与导线，本身不再绘制任何背景（无桌面矩形、无网格、无暗角） */}
       <InfiniteCanvas
+        showToolbar={false}
+        tilt={0}
         stageRef={stageRef}
         content={initialBounds}
         probes={componentProbes}
@@ -624,6 +783,7 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
           height={stageSize.height > 0 ? stageSize.height : '100%'}
           viewBox={stageSize.width > 0 && stageSize.height > 0 ? `0 0 ${stageSize.width} ${stageSize.height}` : undefined}
           className="block"
+          style={{ overflow: 'visible' }}
           role="img"
           aria-label="练习使用电流表实验台"
         >
@@ -636,38 +796,58 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
 
           {!showSchematic && (
             <>
-              {/*
-                导线画在最底层：实物导线是从器材**下方**绕过去的，
-                画在器材之上会把刀开关刀片、电流表表盘挡住，学生就看不清示数了。
-              */}
+              {/* 主导线位于器材下方，所有器材底座附近的接线段单独覆盖图片。 */}
               <g fill="none" strokeLinecap="round" strokeLinejoin="round">
-                {state.edges.map((edge) => {
-                  const path = wirePathD(layout, edge.from, edge.to)
+                {wireVisuals.map(({ edge, path, points }) => {
                   return (
-                    <g key={`${edge.from}-${edge.to}`}>
-                      <path d={path} stroke="#000000" strokeWidth="9" opacity="0.25" />
-                      <path d={path} stroke="#8c1f16" strokeWidth="7" />
-                      <path d={path} stroke="#c0392b" strokeWidth="5" />
-                      <path d={path} stroke="#e8756a" strokeWidth="1.6" opacity="0.75" />
+                    <g key={`${edge.from}-${edge.to}`} data-wire={`${edge.from}:${edge.to}`} data-selected={selectedWire === wireKey(edge.from, edge.to)} pointerEvents="none">
+                      <path d={path} stroke={selectedWire === wireKey(edge.from, edge.to) ? '#f0bd56' : '#9f2015'} strokeWidth={selectedWire === wireKey(edge.from, edge.to) ? 6 : 4} />
+                      <path d={path} stroke={selectedWire === wireKey(edge.from, edge.to) ? '#ffe4a3' : '#d12c17'} strokeWidth="2.8" />
+                      {wireDirections.has(wireKey(edge.from, edge.to)) && <WireCurrentFlow path={path} points={points} direction={wireDirections.get(wireKey(edge.from, edge.to))!} />}
                     </g>
                   )
                 })}
                 {preview && (
                   <path
-                    d={`M ${terminalPosition(layout, preview.from).x.toFixed(1)} ${terminalPosition(layout, preview.from).y.toFixed(1)} L ${preview.position.x.toFixed(1)} ${preview.position.y.toFixed(1)}`}
-                    stroke="#4c9be8"
+                    d={previewPath}
+                    stroke={preview?.edge ? '#d12c17' : '#4c9be8'}
                     strokeWidth="4"
-                    strokeDasharray="9 7"
+                    strokeDasharray={preview?.edge ? undefined : '9 7'}
                   />
                 )}
               </g>
 
               {/* 器材（竞品同款实物）：坐标来自可变布局，可被拖到画布任意位置 */}
-              <BatteryHolderE1 x={batteryPoint.x} y={batteryPoint.y} />
-              <KnifeSwitch x={s1Point.x} y={s1Point.y} closed={s1Closed} label="S1" />
-              <KnifeSwitch x={s2Point.x} y={s2Point.y} closed={s2Closed} label="S2" />
-              <LampHolderL1 x={lampPoint.x} y={lampPoint.y} lit={lit} />
-              <AmmeterA1 x={ammeterPoint.x} y={ammeterPoint.y} reading={reading} range={state.activeRange} overRange={Boolean(state.overRangeWarning)} label="A1" />
+              {batterySelected && !batterySettings.removed && <rect data-battery-selection transform={`rotate(${batterySettings.angle} ${batteryPoint.x} ${batteryPoint.y})`} x={batteryPoint.x - 124} y={batteryPoint.y - 45} width={248} height={87} rx={6} fill="#b9c2d4" opacity={0.13} pointerEvents="none" />}
+              {!batterySettings.removed && <BatteryHolderE1 x={batteryPoint.x} y={batteryPoint.y} damaged={state.sourceDamaged} label={`${batterySettings.namePrefix}${batterySettings.nameNumber}`} reversed={batterySettings.reversed} angle={batterySettings.angle} />}
+              {selectedSwitch && !selectedSwitchSettings!.removed && <rect data-switch-selection={selectedSwitch} transform={`rotate(${selectedSwitchSettings!.angle} ${layout.components[selectedSwitch].x} ${layout.components[selectedSwitch].y})`} x={layout.components[selectedSwitch].x - 85} y={layout.components[selectedSwitch].y - 49} width={170} height={82} rx={6} fill="#b9c2d4" opacity={0.13} pointerEvents="none" />}
+              {!s1Settings.removed && <KnifeSwitch x={s1Point.x} y={s1Point.y} closed={s1Closed} label={`${s1Settings.namePrefix}${s1Settings.nameNumber}`} id="S1" reversed={s1Settings.reversed} angle={s1Settings.angle} broken={s1Settings.broken} />}
+              {!s2Settings.removed && <KnifeSwitch x={s2Point.x} y={s2Point.y} closed={s2Closed} label={`${s2Settings.namePrefix}${s2Settings.nameNumber}`} id="S2" reversed={s2Settings.reversed} angle={s2Settings.angle} broken={s2Settings.broken} />}
+              {lampSelected && !lampSettings.removed && <rect data-lamp-selection transform={`rotate(${lampSettings.angle} ${lampPoint.x} ${lampPoint.y})`} x={lampPoint.x - 85} y={lampPoint.y - 52} width={170} height={91} rx={6} fill="#b9c2d4" opacity={0.13} pointerEvents="none" />}
+              {!lampSettings.removed && <LampHolderL1 x={lampPoint.x} y={lampPoint.y} lit={lit} brightness={live.lampBrightness} label={`${lampSettings.namePrefix}${lampSettings.nameNumber}`} reversed={lampSettings.reversed} angle={lampSettings.angle} detached={state.bulbDetached} damaged={state.lampDamaged} broken={lampSettings.broken} shorted={lampSettings.shorted} />}
+              {meterSelected && !state.meterRemoved && <rect data-meter-selection x={ammeterPoint.x - 88} y={ammeterPoint.y - 113} width={176} height={156} rx={6} fill="#b9c2d4" opacity={0.13} pointerEvents="none" />}
+              {!state.meterRemoved && <AmmeterA1 x={ammeterPoint.x} y={ammeterPoint.y} reading={reading} range={state.activeRange} overRange={Boolean(state.overRangeWarning)} label={`${meterSettings.namePrefix}${meterSettings.nameNumber}`} decimals={meterSettings.decimals} damaged={state.meterDamaged} />}
+
+              <defs><clipPath id={contactClipId}>
+                {LAB_COMPONENT_IDS.filter(id => !removedComponents.includes(id)).map((id) => {
+                  const part = PART_GEOMETRY[id === 'E1' ? 'battery' : id === 'L1' ? 'lamp' : id === 'A1' ? 'ammeter' : 'switch']
+                  const center = layout.components[id]
+                  const top = METAL_POST_GEOMETRY[id].y - 1
+                  return <rect key={id} data-contact-owner={id} transform={layout.componentAngles?.[id] ? `rotate(${layout.componentAngles[id]} ${center.x} ${center.y})` : undefined} x={center.x - part.anchorX * part.scale} y={center.y + top} width={part.width * part.scale} height={(part.height - part.anchorY) * part.scale - top} />
+                })}
+              </clipPath></defs>
+              <g data-wire-contacts clipPath={`url(#${contactClipId})`} fill="none" strokeLinecap="round" pointerEvents="none">
+                {wireVisuals.map(({ edge, path }) => (
+                  <g key={`contact-${edge.from}-${edge.to}`} data-wire-contact={`${edge.from}:${edge.to}`}>
+                    <path d={path} stroke={selectedWire === wireKey(edge.from, edge.to) ? '#f0bd56' : '#9f2015'} strokeWidth={selectedWire === wireKey(edge.from, edge.to) ? 6 : 4} />
+                    <path d={path} stroke={selectedWire === wireKey(edge.from, edge.to) ? '#ffe4a3' : '#d12c17'} strokeWidth="2.8" />
+                  </g>
+                ))}
+                {preview && <path d={previewPath} stroke={preview?.edge ? '#d12c17' : '#4c9be8'} strokeWidth="4" strokeDasharray={preview?.edge ? undefined : '9 7'} />}
+              </g>
+              <defs><linearGradient id={wireMetalId} x1="0" y1="-1" x2="0" y2="3" gradientUnits="userSpaceOnUse"><stop stopColor="#b28d54" /><stop offset="0.35" stopColor="#fff2c7" /><stop offset="0.65" stopColor="#c4b59a" /><stop offset="1" stopColor="#77634a" /></linearGradient></defs>
+              {wireVisuals.flatMap(({ edge, ends }) => ends.map(end => <WireBareEnd key={`${wireKey(edge.from, edge.to)}-${end.terminal}`} end={end} gradient={wireMetalId} />))}
+              {previewEnd && <WireBareEnd end={previewEnd} gradient={wireMetalId} />}
 
               {/*
                 器材本体拖动命中区。
@@ -676,17 +856,49 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
                 同时它必须画在接线柱与折点手柄**之前**：接线柱要保持最上层，
                 否则「想接线」会变成「把器材拖走」。
               */}
-              {LAB_COMPONENT_IDS.map((id) => (
+              {LAB_COMPONENT_IDS.filter((id) => (id !== 'A1' || !state.meterRemoved) && !removedComponents.includes(id)).map((id) => (
                 <ComponentDragHandle
                   key={`drag-${id}`}
                   id={id}
                   layout={layout}
                   drag={labDrag.componentHandlers(id)}
+                  onActivate={id === 'S1' || id === 'S2' ? () => setSelectedSwitch(id) : id === 'A1' ? () => setMeterSelected(true) : id === 'E1' ? () => setBatterySelected(true) : id === 'L1' ? () => setLampSelected(true) : undefined}
                 />
               ))}
 
+              {state.bulbDetached && !lampSettings.removed && <DetachedLampBulb {...detachedPoint} damaged={state.lampDamaged} onAttach={() => dispatch({ type: 'attachBulb' }, 'attach-bulb')} drag={{
+                onPointerDown: event => {
+                  if (event.button !== 0) return
+                  event.stopPropagation()
+                  const point = scenePositionFor(event)
+                  if (!point) return
+                  bulbGesture.current = { pointerId: event.pointerId, offset: { x: detachedPoint.x - point.x, y: detachedPoint.y - point.y } }
+                  event.currentTarget.setPointerCapture(event.pointerId)
+                },
+                onPointerMove: event => {
+                  const gesture = bulbGesture.current
+                  if (!gesture || gesture.pointerId !== event.pointerId) return
+                  const point = scenePositionFor(event)
+                  if (!point) return
+                  setBulbPosition({ x: point.x + gesture.offset.x, y: point.y + gesture.offset.y }); setTouched(true)
+                },
+                onPointerUp: event => { bulbGesture.current = null; if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId) },
+                onPointerCancel: () => { bulbGesture.current = null },
+              }} />}
+              {/* 接线热区在本体拖动热区之上：可见导线不会被透明大框截走。 */}
+              {wireVisuals.map(({ edge, path }) => (
+                <g key={`select-${edge.from}-${edge.to}`} data-wire-selectable data-wire-hit={wireKey(edge.from, edge.to)}
+                  role="button" tabIndex={0} aria-pressed={selectedWire === wireKey(edge.from, edge.to)} aria-label={`选择${terminalLabel(edge.from)}到${terminalLabel(edge.to)}的导线`}
+                  onClick={() => setSelectedWire(wireKey(edge.from, edge.to))}
+                  onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedWire(wireKey(edge.from, edge.to)) } }}
+                  onDoubleClick={() => { setSelectedWire(null); dispatch({ type: 'disconnect', payload: edge }, 'disconnect-wire') }}
+                >
+                  <path d={path} fill="none" stroke="transparent" strokeWidth="16" pointerEvents="stroke" className="cursor-pointer"><title>点击选中 · Delete删除 · 双击拆线</title></path>
+                </g>
+              ))}
+
               {/* 导线折点手柄：拖动即弯折（像真导线一样） */}
-              {state.edges.map((edge) => (
+              {visibleEdges.map((edge) => (
                 <WireBendHandle
                   key={`bend-${edge.from}-${edge.to}`}
                   from={edge.from}
@@ -694,18 +906,37 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
                   layout={layout}
                   active={labDrag.dragging?.kind === 'wire' && labDrag.dragging.from === edge.from && labDrag.dragging.to === edge.to}
                   drag={labDrag.wireHandlers(edge.from, edge.to)}
+                  onSelect={() => setSelectedWire(wireKey(edge.from, edge.to))}
+                  onDisconnect={() => { setSelectedWire(null); dispatch({ type: 'disconnect', payload: edge }, 'disconnect-wire') }}
                 />
               ))}
 
+              {/* 闸刀覆盖穿过它的导线热区；接线帽随后绘制，仍可独立拖动接线。 */}
+              {!s1Settings.removed && <SwitchHandle id="S1" x={s1Point.x} y={s1Point.y} closed={s1Closed} reversed={s1Settings.reversed} angle={s1Settings.angle} onToggle={() => dispatch({ type: 'setSwitch', payload: s1Closed ? 'open' : 'closed' }, 'toggle-main-switch')} />}
+              {!s2Settings.removed && <SwitchHandle id="S2" x={s2Point.x} y={s2Point.y} closed={s2Closed} reversed={s2Settings.reversed} angle={s2Settings.angle} onToggle={() => dispatch({ type: 'setBypassSwitch', payload: s2Closed ? 'open' : 'closed' }, 'toggle-bypass-switch')} />}
+
               {/* 接线柱（可拖拽拉线）：坐标由布局推导，跟随器材移动 */}
-              {TERMINAL_DRAW_ORDER.map((id) => (
+              {TERMINAL_DRAW_ORDER.filter((id) => (!state.meterRemoved || !id.startsWith('ammeter-')) && (!removedComponents.includes(TERMINAL_OWNER[id]) || terminalHasWire(state, id))).map((id) => (
                 <CompetitorTerminal
                   key={id}
                   id={id}
                   state={state}
-                  point={terminalPosition(layout, id)}
+                  point={removedComponents.includes(TERMINAL_OWNER[id]) ? wireContactPoints.get(id) ?? terminalPosition(layout, id) : terminalPosition(layout, id)}
+                  selected={selectedTerminal === id}
+                  angle={layout.componentAngles?.[TERMINAL_OWNER[id]]}
+                  loose={removedComponents.includes(TERMINAL_OWNER[id])}
                   drag={{
-                    onPointerDown: (event) => pointerDrag.onPointerDown(pointerEvent(event), id),
+                    onPointerDown: (event) => {
+                      event.stopPropagation()
+                      setSelectedTerminal(id)
+                      const attached = state.edges.filter((edge) => edge.from === id || edge.to === id)
+                      const chosen = attached.find((edge) => wireKey(edge.from, edge.to) === selectedWire)
+                      if (!event.shiftKey && attached.length > 1 && !chosen) {
+                        setWireHint('此接线柱有多根导线，请先点选要调整的导线；Shift＋拖动可新增导线')
+                        return
+                      }
+                      pointerDrag.onPointerDown(pointerEvent(event), { terminal: id, edge: event.shiftKey ? undefined : chosen ?? attached[0] })
+                    },
                     onPointerMove: (event) => pointerDrag.onPointerMove(pointerEvent(event)),
                     onPointerUp: (event) => pointerDrag.onPointerUp(pointerEvent(event)),
                     onPointerCancel: (event) => pointerDrag.onPointerCancel(pointerEvent(event)),
@@ -715,48 +946,35 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
             </>
           )}
 
-          {showSchematic && <AmmeterSchematic state={state} reading={reading} />}
+          {showSchematic && <AmmeterSchematic state={state} reading={reading} layout={layout} selectedWire={selectedWire} onSelectWire={setSelectedWire} />}
 
         </svg>
       </InfiniteCanvas>
 
-      {/* 左上角浮层：转电路图 + 复位器材摆位 */}
-      <button
-        type="button"
-        data-canvas-pan-block
-        aria-pressed={showSchematic}
-        aria-label={showSchematic ? '回到实物图' : '转电路图'}
-        title={showSchematic ? '回到实物图' : '转电路图'}
-        onClick={() => setShowSchematic((current) => !current)}
-        className="absolute left-4 top-16 z-30 flex w-[78px] flex-col items-center gap-1 rounded-[10px] bg-[#3b4048] px-2 py-3 text-[12px] font-medium text-[#e6ebf1] shadow-lg hover:bg-[#454b54]"
-      >
-        <span className="grid size-9 place-items-center rounded-full bg-white/10"><Grid3x3 className="size-5" aria-hidden="true" /></span>
-        <span>{showSchematic ? '实物图' : '转电路图'}</span>
-      </button>
+      {lampSelected && !lampSettings.removed && <LampInspector settings={lampSettings} detached={Boolean(state.bulbDetached)} point={{ x: Math.max(8, Math.min(stageSize.width - 48, cameraState.x + lampBounds.right * cameraState.scale + 8)), y: Math.max(74, Math.min(stageSize.height - 300, cameraState.y + lampBounds.top * cameraState.scale)) }} viewport={stageSize} onChange={settings => dispatch({ type: 'setLampSettings', payload: settings }, 'lamp-settings')} onDetach={() => { setBulbPosition({ x: lampPoint.x, y: lampPoint.y - 30 }); dispatch({ type: 'detachBulb' }, 'detach-bulb') }} onFlip={() => dispatch({ type: 'flipLamp' }, 'flip-lamp')} onDelete={() => { dispatch({ type: 'deleteLamp' }, 'delete-lamp'); setLampSelected(false) }} />}
+      {batterySelected && !batterySettings.removed && <BatteryInspector settings={batterySettings} point={{ x: Math.max(8, Math.min(stageSize.width - 48, cameraState.x + batteryBounds.right * cameraState.scale + 8)), y: Math.max(74, Math.min(stageSize.height - 260, cameraState.y + batteryBounds.top * cameraState.scale)) }} viewport={stageSize} onChange={settings => dispatch({ type: 'setBatterySettings', payload: settings }, 'battery-settings')} onFlip={() => dispatch({ type: 'flipBattery' }, 'flip-battery')} onDelete={() => { dispatch({ type: 'deleteBattery' }, 'delete-battery'); setBatterySelected(false) }} />}
+      {selectedSwitch && selectedSwitchSettings && selectedSwitchBounds && !selectedSwitchSettings.removed && <SwitchInspector key={selectedSwitch} id={selectedSwitch} settings={selectedSwitchSettings} point={{ x: Math.max(8, Math.min(stageSize.width - 48, cameraState.x + selectedSwitchBounds.right * cameraState.scale + 8)), y: Math.max(74, Math.min(stageSize.height - 260, cameraState.y + selectedSwitchBounds.top * cameraState.scale)) }} viewport={stageSize} onChange={settings => dispatch({ type: 'setSwitchSettings', payload: { id: selectedSwitch, settings } }, 'switch-settings')} onFlip={() => dispatch({ type: 'flipSwitch', payload: selectedSwitch }, 'flip-switch')} onDelete={() => { dispatch({ type: 'deleteSwitch', payload: selectedSwitch }, 'delete-switch'); setSelectedSwitch(null) }} />}
+      {meterSelected && !state.meterRemoved && <MeterInspector settings={meterSettings} point={{ x: Math.max(8, Math.min(stageSize.width - 48, cameraState.x + (ammeterPoint.x + 91) * cameraState.scale)), y: Math.max(74, Math.min(stageSize.height - 152, cameraState.y + (ammeterPoint.y - 112) * cameraState.scale)) }} width={stageSize.width} onChange={(settings) => dispatch({ type: 'setMeterSettings', payload: settings }, 'meter-settings')} onModel={() => setModelOpen(true)} onDelete={() => { dispatch({ type: 'deleteMeter' }, 'delete-meter'); setMeterSelected(false); setModelOpen(false) }} />}
+      {modelOpen && !state.meterRemoved && <Suspense fallback={<p className="absolute left-4 top-20 z-40 text-white">正在加载3D模型…</p>}><AmmeterModel3D onClose={() => setModelOpen(false)} /></Suspense>}
+      {meterSettings.showGraph && !state.meterRemoved && <MeterCurrentGraph current={reading} decimals={meterSettings.decimals} point={{ x: cameraState.x + (ammeterPoint.x + (PART_GEOMETRY.ammeter.width - PART_GEOMETRY.ammeter.anchorX) * PART_GEOMETRY.ammeter.scale) * cameraState.scale + (meterSelected ? 60 : 16), y: cameraState.y + (ammeterPoint.y - 112) * cameraState.scale }} meterLeft={cameraState.x + (ammeterPoint.x - PART_GEOMETRY.ammeter.anchorX * PART_GEOMETRY.ammeter.scale) * cameraState.scale} viewport={stageSize} onClose={() => dispatch({ type: 'setMeterSettings', payload: { ...meterSettings, showGraph: false } }, 'meter-settings')} />}
 
-      {/* 器材摆位复位：把器材与导线恢复到竞品原始构图 */}
-      <button
-        type="button"
-        data-canvas-pan-block
-        aria-label="复位器材摆位"
-        title="复位器材摆位"
-        onClick={() => {
-          // 复位摆位 = 回到"按当前舞台摆好的初始构图"，并把自动重排重新打开
+      <ImmersiveToolbarSlot>
+        <ImmersiveToolbarButton label="清空接线" showLabel onClick={() => dispatch({ type: 'resetTrial' }, 'clear-wiring')}>
+          <Unplug className="size-4" aria-hidden="true" />
+        </ImmersiveToolbarButton>
+        <ImmersiveToolbarButton
+          label={showSchematic ? '回到实物图' : '转电路图'}
+          active={showSchematic}
+          showLabel
+          onClick={() => setShowSchematic((current) => !current)}
+        ><Grid3x3 className="size-4" aria-hidden="true" /></ImmersiveToolbarButton>
+        <ImmersiveToolbarButton label="复位器材摆位" showLabel onClick={() => {
+          const next = { ...initialLayoutFor(stageSize.width, stageSize.height), componentAngles: layout.componentAngles }
           setTouched(false)
-          setLayout(initialLayoutFor(stageSize.width, stageSize.height))
-        }}
-        className="absolute left-4 top-[164px] z-30 flex w-[78px] flex-col items-center gap-1 rounded-[10px] bg-[#3b4048] px-2 py-3 text-[12px] font-medium text-[#e6ebf1] shadow-lg hover:bg-[#454b54]"
-      >
-        <span className="grid size-9 place-items-center rounded-full bg-white/10"><LayoutGrid className="size-5" aria-hidden="true" /></span>
-        <span>复位摆位</span>
-      </button>
-
-      {/* 操作提示：告诉学生器材和导线都可以直接拖 */}
-      <div className="pointer-events-none absolute left-4 top-[224px] z-30 w-[132px] rounded-[8px] border border-white/10 bg-[#22262c]/80 px-3 py-2 text-[11px] leading-5 text-[#9aa4b2] backdrop-blur">
-        全屏画布任意摆放<br />拖导线中点可弯折<br />拖接线柱接导线
-        <br />
-        <span className="text-[#7f8a98]">滚轮缩放 · 空格+拖动平移</span>
-      </div>
+          setLayout(next)
+          focusLayout(next)
+        }}><RotateCcw className="size-4" aria-hidden="true" /></ImmersiveToolbarButton>
+      </ImmersiveToolbarSlot>
 
       {/*
         器材被拖出可见范围时的「全部收回」入口。
@@ -768,7 +986,7 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
           type="button"
           data-canvas-pan-block
           aria-label="把拖出屏幕的器材收回可见范围"
-          onClick={() => setLayout((current) => rescueAllComponents(current, visibleRect()))}
+          onClick={() => focusLayout(layout)}
           className="absolute left-1/2 top-16 z-30 -translate-x-1/2 rounded-full border border-amber-400/40 bg-amber-500/15 px-4 py-1.5 text-[12px] font-semibold text-amber-200 backdrop-blur hover:bg-amber-500/25"
         >
           有 {strayComponents.length} 件器材在屏幕外 · 点此全部收回
@@ -776,61 +994,17 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
       )}
 
       {/* 右侧协作入口 */}
-      <div className="absolute right-[68px] top-16 z-30 flex items-start gap-2">
-        <CanvasPill label="边做边看" onClick={onTogglePanel} active={panelOpen}><PlayCircle className="size-5" aria-hidden="true" /></CanvasPill>
-        <CanvasPill label="实验报告" onClick={onOpenReport}><FileText className="size-5" aria-hidden="true" /></CanvasPill>
-        <CanvasPill label="交互热点"><Aperture className="size-5" aria-hidden="true" /></CanvasPill>
+      <div className="absolute right-3 top-3 z-30 flex items-start gap-3">
+        <CanvasPill label="实验报告" onClick={onOpenReport}><FileText className="size-4" aria-hidden="true" /></CanvasPill>
+        <CanvasPill label="推送学生端打开" onClick={() => setWireHint('敬请期待')}><MonitorUp className="size-4" aria-hidden="true" /></CanvasPill>
       </div>
 
-      {/* 底部读数条：悬浮在画布之上，不占用画布空间 */}
-      <div
-        data-canvas-pan-block
-        className="absolute bottom-4 left-1/2 z-30 flex max-w-[min(1080px,94vw)] -translate-x-1/2 flex-wrap items-center gap-2 rounded-[10px] border border-white/10 bg-[#22262c]/90 px-3 py-2 backdrop-blur"
-      >
-        <span className="inline-flex items-center gap-1.5 text-[13px] font-semibold text-[#e6ebf1]">
-          <Gauge className="size-4" aria-hidden="true" />
-          {activeTrial ? `读数 ${activeTrial.reading.toFixed(2)} A` : '读数 0.00 A'}
-        </span>
-        <div role="group" aria-label="选择量程" className="inline-flex rounded-[6px] border border-[#4a5058] p-0.5">
-          {(['3A', '0.6A'] as const).map((range) => (
-            <button
-              key={range}
-              type="button"
-              data-canvas-pan-block
-              aria-pressed={state.activeRange === range}
-              onClick={() => dispatch({ type: 'setRange', payload: range }, 'set-ammeter-range')}
-              disabled={state.switchClosed}
-              className={`h-7 whitespace-nowrap rounded-[4px] px-3 text-[12px] font-bold disabled:opacity-45 ${state.activeRange === range ? 'bg-[#c0392b] text-white' : 'text-[#cdd4dc]'}`}
-            >
-              {range === '3A' ? '3A 大量程' : '0.6A 小量程'}
-            </button>
-          ))}
-        </div>
-        <span className="text-[12px] font-semibold text-[#cdd4dc]">{state.switchClosed ? '电路已接通' : '开关断开'}</span>
-        <span className="hidden text-[12px] text-[#8b95a2] sm:inline">
-          {state.activeRange === null ? '把电流表串联接入电路（电流从“+”流入）' : `当前量程 ${RANGE_SPEC[state.activeRange].label}（分度值 ${RANGE_SPEC[state.activeRange].division} A）`}
-        </span>
-        <div className="ml-auto flex items-center gap-2">
-          <button
-            type="button"
-            data-canvas-pan-block
-            aria-label={state.switchClosed ? '断开开关' : '闭合开关'}
-            onClick={() => dispatch({ type: 'setSwitch', payload: state.switchClosed ? 'open' : 'closed' }, 'toggle-switch')}
-            className={`inline-flex h-9 items-center gap-2 rounded-[6px] px-4 text-[13px] font-bold text-white ${state.switchClosed ? 'bg-[#c0392b]' : 'bg-[#2e7d4f]'}`}
-          >
-            {state.switchClosed ? '断开开关' : '闭合开关'}
-          </button>
-          <span className={`inline-flex items-center gap-1 text-[13px] font-semibold ${lit ? 'text-[#f0c86a]' : 'text-[#8b95a2]'}`}>
-            <BookOpen className="size-4" aria-hidden="true" />
-            {lit ? '灯泡发光' : '灯泡未亮'}
-          </span>
-        </div>
-      </div>
+      {wireHint && <p role="status" className={`absolute z-30 rounded bg-[#22262c]/95 px-3 py-2 text-xs text-amber-200 ${wireHint === '敬请期待' ? 'right-3 top-16' : 'bottom-20 left-1/2 -translate-x-1/2'}`}>{wireHint}</p>}
 
       {/* 过载提示 */}
       {state.overRangeWarning !== null && (
         <div role="alert" className="absolute left-1/2 top-20 z-30 w-[min(560px,86%)] -translate-x-1/2 rounded-[8px] border border-[#c0392b] bg-[#3a2020] px-4 py-3 text-sm text-[#f0b0a8] shadow-lg">
-          <span className="mr-2 font-bold">量程过小</span>
+          <span className="mr-2 font-bold">实验现象</span>
           {state.overRangeWarning}
         </div>
       )}
@@ -838,81 +1012,42 @@ function CompetitorSceneCanvas({ state, dispatch, onTogglePanel, onOpenReport, p
   )
 }
 
-function CanvasPill({ label, onClick, active = false, children }: { label: string; onClick?(): void; active?: boolean; children: React.ReactNode }) {
+function CanvasPill({ label, onClick, children }: { label: string; onClick?(): void; children: React.ReactNode }) {
   return (
     <button
       type="button"
       aria-label={label}
       title={label}
-      aria-pressed={active}
       onClick={onClick}
-      className={`flex w-[76px] flex-col items-center gap-1 rounded-[10px] px-2 py-2 text-[12px] font-medium text-[#e6ebf1] transition ${active ? 'bg-[#4a5058]' : 'bg-[#3b4048] hover:bg-[#454b54]'}`}
+      className="flex h-12 flex-col items-center justify-center gap-1 text-[11px] font-medium text-[#9aa4b2] transition hover:text-white"
     >
-      <span className="grid size-9 place-items-center rounded-full bg-white/10">{children}</span>
+      <span>{children}</span>
       <span>{label}</span>
     </button>
   )
 }
 
-/** 右侧实验报告抽屉：文案与竞品 textPanel 完全一致 */
-function ReportDrawer({ open, onClose }: { open: boolean; onClose(): void }) {
-  if (!open) return null
-  return (
-    <aside data-selectable-content className="absolute right-0 top-12 z-20 flex h-[calc(100%-3rem)] w-[min(420px,92%)] flex-col border-l shadow-2xl" style={{ background: '#fbfaf7', borderColor: chromeBorder }} aria-label="实验报告">
-      <header className="flex items-center justify-between border-b border-[#e2ddd3] px-5 py-3">
-        <h2 className="text-base font-bold text-[#242424]">实验报告</h2>
-        <button type="button" onClick={onClose} className="rounded-[6px] border border-[#d8d2c8] px-3 py-1 text-sm text-[#4b4742]">收起</button>
-      </header>
-      <div className="flex-1 space-y-5 overflow-y-auto px-5 py-4">
-        {COMPETITOR_TEXT_PANEL.map((section) => (
-          <section key={section.title}>
-            <h3 className="text-sm font-bold text-[#165DFF]">{section.title}</h3>
-            <div className="mt-2 space-y-1.5">
-              {section.paragraphs.map((paragraph) => (
-                <p key={paragraph} className="text-sm leading-6 text-[#4b4742]">{paragraph}</p>
-              ))}
-            </div>
-          </section>
-        ))}
-      </div>
-    </aside>
-  )
-}
-
-/**
- * 最近的接线柱（含坐标）。
- * 坐标由布局推导，因此拖动器材之后命中区会同步移动，
- * 不会出现「看起来接在这、实际要点那里」的错位。
- */
-function nearestTerminal(layout: LabLayout, position: Position): { id: AmmeterTerminalId; position: Position } | null {
-  let best: { id: AmmeterTerminalId; position: Position; distance: number } | null = null
-  for (const id of TERMINAL_DRAW_ORDER) {
-    const point = terminalPosition(layout, id)
-    const distance = Math.hypot(position.x - point.x, position.y - point.y)
-    if (best === null || distance < best.distance) best = { id, position: point, distance }
-  }
-  return best === null ? null : { id: best.id, position: best.position }
-}
-
-/** 接线柱吸附命中（用于拉线落点判定，保持原有手感） */
-function terminalAt(layout: LabLayout, position: Position): AmmeterTerminalId | null {
-  const nearest = nearestTerminal(layout, position)
-  if (nearest === null) return null
-  return Math.hypot(position.x - nearest.position.x, position.y - nearest.position.y) <= 28 ? nearest.id : null
+function WireCurrentFlow({ path, points, direction }: { path: string; points: readonly Position[]; direction: 1 | -1 }) {
+  // 用导线控制折线估计长度，让短线与长线上的箭头保持相近间距及速度。
+  const length = points.slice(1).reduce((sum, point, i) => sum + Math.hypot(point.x - points[i].x, point.y - points[i].y), 0)
+  const count = Math.max(2, Math.ceil(length / 25))
+  const duration = Math.max(0.5, length / 80)
+  return <g data-wire-flow data-direction={direction} aria-hidden="true" fill="none" stroke="#fff" strokeWidth="1.6" pointerEvents="none">
+    {Array.from({ length: count }, (_, i) => <path key={i} d="M-2.5 -2.5 L0 0 L-2.5 2.5">
+      <animateMotion path={path} dur={`${duration}s`} begin={`${-i * duration / count}s`} repeatCount="indefinite" rotate={direction === 1 ? 'auto' : 'auto-reverse'} keyPoints={direction === 1 ? '0;1' : '1;0'} keyTimes="0;1" calcMode="linear" />
+    </path>)}
+  </g>
 }
 
 export function AmmeterScene(props: PhysicsLabSceneProps<AmmeterLabState>) {
-  const [panelOpen, setPanelOpen] = useState(false)
   const [reportOpen, setReportOpen] = useState(false)
   return (
     <div className="relative h-full w-full min-h-0 select-none">
       <CompetitorSceneCanvas
         {...props}
-        panelOpen={panelOpen}
-        onTogglePanel={() => setPanelOpen((current) => !current)}
-        onOpenReport={() => setReportOpen((current) => !current)}
+        onOpenReport={props.onOpenReport ?? (() => setReportOpen(true))}
       />
-      <ReportDrawer open={reportOpen} onClose={() => setReportOpen(false)} />
+      {!props.onOpenReport && <ReportDrawer open={reportOpen} onClose={() => setReportOpen(false)} />}
     </div>
   )
 }
@@ -926,7 +1061,7 @@ export function AmmeterScene(props: PhysicsLabSceneProps<AmmeterLabState>) {
 export function AmmeterLab({ experiment }: { experiment: TextbookPhysicsExperiment }) {
   return (
     <div className="h-[100dvh] w-full">
-      <PhysicsLabShell experiment={experiment} controller={ammeterController} Scene={AmmeterScene} backTo="/physics" />
+      <PhysicsLabShell experiment={experiment} controller={practiceController} Scene={AmmeterScene} ReportView={ReportDrawer} showActionLabels showFooter={false} backTo="/physics" editableTitleStorageKey={`physics:lab-title:${experiment.id}`} />
     </div>
   )
 }

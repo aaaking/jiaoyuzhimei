@@ -7,9 +7,9 @@ type ControlledLabRuntime<TState> = LabRuntime<TState> & {
   readonly [controllerKey]: LabController<TState>
 }
 
-export function createLabRuntime<TState>(controller: LabController<TState>): LabRuntime<TState> {
+export function createLabRuntime<TState>(controller: LabController<TState>, initialState = controller.createInitialState()): LabRuntime<TState> {
   return withController({
-    present: controller.createInitialState(),
+    present: initialState,
     past: [],
     future: [],
     feedback: null,
@@ -28,7 +28,7 @@ export function reduceLabAction<TState>(
     case 'redo':
       return redo(runtime, controller)
     case 'reset':
-      return createLabRuntime(controller)
+      return createLabRuntime(controller, controller.createResetState?.())
     case 'hydrate':
       return hydrateLabRuntime(runtime, action.payload)
     default:

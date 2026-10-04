@@ -130,6 +130,9 @@ export interface WireShape {
 export interface LabLayout {
   components: Readonly<Record<LabComponentId, Position>>
   wires: Readonly<Record<WireKey, WireShape>>
+  terminalOffsets?: Readonly<Record<AmmeterTerminalId, Position>>
+  componentAngles?: Partial<Record<LabComponentId, number>>
+  componentReversed?: Partial<Record<LabComponentId, boolean>>
 }
 
 /** 初始布局：器材停在竞品原始坐标上，导线保持竞品原始手绘弧度 */
@@ -183,8 +186,10 @@ function normalize(vector: Position): Position {
 export function terminalPosition(layout: LabLayout, id: AmmeterTerminalId): Position {
   const owner = TERMINAL_OWNER[id]
   const center = layout.components[owner]
-  const offset = TERMINAL_OFFSETS[id]
-  return { x: center.x + offset.x, y: center.y + offset.y }
+  const offset = (layout.terminalOffsets ?? TERMINAL_OFFSETS)[id]
+  const angle = (layout.componentAngles?.[owner] ?? 0) * Math.PI / 180
+  const dx = offset.x * (layout.componentReversed?.[owner] ? -1 : 1)
+  return { x: center.x + dx * Math.cos(angle) - offset.y * Math.sin(angle), y: center.y + dx * Math.sin(angle) + offset.y * Math.cos(angle) }
 }
 
 export function terminalPositions(layout: LabLayout): Record<AmmeterTerminalId, Position> {
@@ -510,7 +515,7 @@ export function fitLayoutToStage(
   for (const [key, shape] of Object.entries(layout.wires)) {
     wires[key] = { bend: shape.bend * scale, direction: { ...shape.direction } }
   }
-  return { components: components as Record<LabComponentId, Position>, wires }
+  return { ...layout, components: components as Record<LabComponentId, Position>, wires }
 }
 
 /* ------------------------------------------------------------------ *

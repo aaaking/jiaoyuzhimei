@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent, t
 
 /** 稳定的空数组，避免默认值每次渲染都变、把聚焦 effect 打爆 */
 const EMPTY_PROBES: readonly Position[] = []
+const LONG_PRESS_PAN_DELAY = 300
 import type { Position } from '../types'
 import {
   IDENTITY_CAMERA,
@@ -24,6 +25,8 @@ export interface InfiniteCanvasApi {
   size: CanvasSize
   /** 是否处于可抓取平移状态（空格或中键/右键拖动） */
   panReady: boolean
+  /** 已认领当前指针的平移手势（包括空白处长按） */
+  panActive: boolean
   resetView(): void
   zoomBy(factor: number): void
   fitToContent(bounds: ContentBounds): void
@@ -94,10 +97,11 @@ function localPoint(stage: HTMLElement | null, clientX: number, clientY: number)
 /**
  * 无限画布交互：滚轮缩放、拖动平移、双指捏合、聚焦内容。
  *
- * 平移手势的触发条件（用户明确要求的两条）：
+ * 平移手势的触发条件：
  *   1. **按住空格 + 按住鼠标左键拖动** —— 无论指针停在画布哪一层
  *      （SVG 上、器材上、导线上都算），一律平移画布；
  *   2. 中键 / 右键拖动 —— 鼠标用户的快捷方式，同样不看指针在哪一层。
+ *   3. 空白画布长按鼠标左键 300ms 后拖动；器材、导线与控件不走这条入口。
  *
  * ⚠️ 「指针落在 `svg` 上就不算平移」这条旧判据在本实验台里**等于"无法平移"**：
  * 场景的 `<svg>` 是铺满整个舞台的（见 `CompetitorScene`），
@@ -114,8 +118,10 @@ export function useInfiniteCanvas({
   const [size, setSize] = useState<CanvasSize>({ width: 0, height: 0 })
   const [camera, setCamera] = useState<Camera>(IDENTITY_CAMERA)
   const [panReady, setPanReady] = useState(false)
+  const [panActive, setPanActive] = useState(false)
   const panRef = useRef<{
     pointerId: number
+    target: HTMLElement
     /** 上一帧位置（用于算增量平移） */
     x: number
     y: number
@@ -124,6 +130,27 @@ export function useInfiniteCanvas({
     originY: number
     moved: boolean
   } | null>(null)
+  const pendingPanRef = useRef<{ pointerId: number; target: HTMLElement; x: number; y: number; timer: number } | null>(null)
+  const cancelPendingPan = useCallback(() => {
+    const pending = pendingPanRef.current
+    if (pending === null) return
+    window.clearTimeout(pending.timer)
+    pendingPanRef.current = null
+    if (pending.target.hasPointerCapture?.(pending.pointerId)) pending.target.releasePointerCapture(pending.pointerId)
+  }, [])
+  const stopPan = useCallback(() => {
+    cancelPendingPan()
+    const pan = panRef.current
+    panRef.current = null
+    if (pan?.target.hasPointerCapture?.(pan.pointerId)) pan.target.releasePointerCapture(pan.pointerId)
+    setPanActive(false)
+  }, [cancelPendingPan])
+  const beginPan = useCallback((pointerId: number, x: number, y: number, target: HTMLElement) => {
+    cancelPendingPan()
+    panRef.current = { pointerId, target, x, y, originX: x, originY: y, moved: false }
+    capturePanPointer(target, pointerId)
+    setPanActive(true)
+  }, [cancelPendingPan])
   /**
    * `panReady` 的**事件回调可读镜像**。
    *
@@ -301,6 +328,7 @@ export function useInfiniteCanvas({
     }
     const onBlur = () => {
       setPanReady(false)
+      stopPan()
     }
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
@@ -309,8 +337,9 @@ export function useInfiniteCanvas({
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
+      stopPan()
     }
-  }, [])
+  }, [stopPan])
 
   const toCanvasPoint = useCallback((point: Position) => screenToCanvas(point, cameraRef.current), [])
   const toScreenPoint = useCallback(
@@ -395,25 +424,24 @@ export function useInfiniteCanvas({
        * 所以：**认领走了的指针不进 `pinchRef`**，只把"确实空出来的第二指"留给捏合。
        */
       if (panRef.current === null && panEligible(event)) {
-        panRef.current = {
-          pointerId: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
-          originX: event.clientX,
-          originY: event.clientY,
-          moved: false,
-        }
-        const captureTarget = event.currentTarget as
-          | (EventTarget & { setPointerCapture?: (id: number) => void })
-          | null
-        if (captureTarget !== null && typeof captureTarget.setPointerCapture === 'function') {
-          try {
-            captureTarget.setPointerCapture(event.pointerId)
-          } catch {
-            // 少数环境（含无头 DOM）不支持捕获；没有它也能靠手势层上的事件继续平移
-          }
-        }
+        beginPan(event.pointerId, event.clientX, event.clientY, event.currentTarget as HTMLElement)
         // 认领后立刻截断：场景侧的器材 / 接线柱 / 导线收不到这次按下，不会被顺手拖走
+        event.stopPropagation()
+        return
+      }
+      // 只有空白处的鼠标左键启动长按；器材、导线及按钮仍接收自己的事件。
+      const target = event.target as Element | null
+      if (panRef.current === null && pendingPanRef.current === null && event.button === 0 && event.pointerType === 'mouse'
+        && !target?.closest('[data-component-drag],[data-hit-target],[data-wire-hit],[data-wire-selectable],[data-detached-bulb],[data-canvas-pan-block],button,input,select,textarea,a,[role="button"],[contenteditable="true"]')) {
+        const captureTarget = event.currentTarget as HTMLElement
+        capturePanPointer(captureTarget, event.pointerId)
+        const timer = window.setTimeout(() => {
+          const pending = pendingPanRef.current
+          if (pending === null) return
+          pendingPanRef.current = null
+          beginPan(pending.pointerId, pending.x, pending.y, pending.target)
+        }, LONG_PRESS_PAN_DELAY)
+        pendingPanRef.current = { pointerId: event.pointerId, target: captureTarget, x: event.clientX, y: event.clientY, timer }
         event.stopPropagation()
         return
       }
@@ -431,7 +459,7 @@ export function useInfiniteCanvas({
        * 被场景占走的指针自然**不会被登记**，也就不会凑出假的"双指"。
        */
     },
-    [panEligible],
+    [panEligible, beginPan],
   )
 
   const handlers = {
@@ -445,19 +473,19 @@ export function useInfiniteCanvas({
     onPointerDown: (event: PointerEvent<HTMLElement>) => {
       // 与捕获阶段同一条纪律：认领与捏合登记互斥（见 `onPointerDownCapture` 注释）
       if (panRef.current === null && panEligible(event)) {
-        panRef.current = {
-          pointerId: event.pointerId,
-          x: event.clientX,
-          y: event.clientY,
-          originX: event.clientX,
-          originY: event.clientY,
-          moved: false,
-        }
+        beginPan(event.pointerId, event.clientX, event.clientY, event.currentTarget)
         return
       }
       pinchRef.current.set(event.pointerId, { x: event.clientX, y: event.clientY })
     },
     onPointerMove: (event: PointerEvent<HTMLElement>) => {
+      const pending = pendingPanRef.current
+      if (pending?.pointerId === event.pointerId) {
+        pending.x = event.clientX
+        pending.y = event.clientY
+        event.stopPropagation()
+        return
+      }
       const panning = panRef.current !== null && panRef.current.pointerId === event.pointerId
       /**
        * ⚠️ **正在平移的那一指不参与捏合** —— 这是**防御性**代码，不是被测试覆盖的行为。
@@ -521,6 +549,7 @@ export function useInfiniteCanvas({
       event.stopPropagation()
     },
     onPointerUp: (event: PointerEvent<HTMLElement>) => {
+      if (pendingPanRef.current?.pointerId === event.pointerId) cancelPendingPan()
       pinchRef.current.delete(event.pointerId)
       if (pinchRef.current.size < 2) pinchDistanceRef.current = null
       const pan = panRef.current
@@ -533,6 +562,7 @@ export function useInfiniteCanvas({
         target.releasePointerCapture?.(event.pointerId)
       }
       panRef.current = null
+      setPanActive(false)
       /**
        * ⚠️ **刻意不复位 `panReady`**。
        *
@@ -558,7 +588,7 @@ export function useInfiniteCanvas({
     onPointerCancel: (event: PointerEvent<HTMLElement>) => {
       pinchRef.current.delete(event.pointerId)
       if (pinchRef.current.size < 2) pinchDistanceRef.current = null
-      panRef.current = null
+      stopPan()
     },
     onWheel: (event: React.WheelEvent<HTMLElement>) => {
       // React 的滚轮事件是 passive 监听，这里只需阻止页面滚动
@@ -619,7 +649,15 @@ export function useInfiniteCanvas({
     }
   }, [stageRef, onPointerDownCapture])
 
-  return { camera, size, panReady, resetView, zoomBy, fitToContent, toCanvasPoint, toScreenPoint, handlers }
+  return { camera, size, panReady, panActive, resetView, zoomBy, fitToContent, toCanvasPoint, toScreenPoint, handlers }
+}
+
+function capturePanPointer(target: HTMLElement, pointerId: number) {
+  try {
+    target.setPointerCapture?.(pointerId)
+  } catch {
+    // 无头 DOM 等环境不支持指针捕获，仍可通过手势层上的事件继续平移。
+  }
 }
 
 /**

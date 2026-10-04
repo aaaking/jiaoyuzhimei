@@ -38,7 +38,7 @@ export default function PhysicsSessionsPage() {
                 <p className="mt-4 text-sm text-[#6f6a62]">{session.events.length} 条操作记录，{session.measurements.length} 条读数</p>
                 <div className="mt-5 flex flex-wrap gap-3">
                   {experiment ? <Link to={`/physics/labs/${session.experimentId}`} className="rounded-[6px] border border-[#dedad2] px-3 py-2 text-sm font-semibold text-[#4b4742]">继续实验</Link> : <span className="text-sm text-[#8a867f]">实验已从目录中移除</span>}
-                  <Link to={`/physics/sessions/${session.id}/report`} className="rounded-[6px] bg-[#165DFF] px-3 py-2 text-sm font-semibold text-white">查看报告</Link>
+                  {session.experimentId !== 'ammeter-use' && <Link to={`/physics/sessions/${session.id}/report`} className="rounded-[6px] bg-[#165DFF] px-3 py-2 text-sm font-semibold text-white">查看报告</Link>}
                 </div>
               </article>
             )

@@ -12,9 +12,17 @@ const requirementLabels: Record<ExperimentRequirement, string> = {
   optional: '选做',
 }
 
+const experimentThumbnails: Readonly<Record<string, string>> = {
+  'heat-capacity-comparison': 'physics/thumbnails/heat-capacity-comparison.png',
+  'series-parallel-circuit': 'physics/thumbnails/series-parallel-circuit.png',
+  'ammeter-use': 'physics/thumbnails/ammeter-use.png',
+  'electromagnetic-induction': 'physics/thumbnails/electromagnetic-induction.png',
+}
+
 function TextbookExperimentCard({ item }: { item: (typeof textbookPhysicsExperiments)[number] }) {
   const target = getTextbookExperimentTarget(item)
   const isAvailable = target !== undefined
+  const thumbnail = experimentThumbnails[item.id]
   const cardContent = (
     <>
       <div className="flex items-start justify-between gap-3">
@@ -26,9 +34,10 @@ function TextbookExperimentCard({ item }: { item: (typeof textbookPhysicsExperim
           {requirementLabels[item.requirement]}
         </span>
       </div>
-      <h3 className="mt-4 text-base font-bold leading-6 text-[#242424]">{item.title}</h3>
-      <p className="mt-3 min-h-[44px] text-sm leading-[22px] text-[#8a867f] line-clamp-2">{item.purpose[0]}</p>
-      <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#ece8df] pt-3 text-xs text-[#77716a]">
+      {thumbnail && <img src={`${import.meta.env.BASE_URL}${thumbnail}`} alt={`${item.title}实验主视觉`} loading="lazy" width={640} height={360} className="mt-4 aspect-video w-full rounded-[6px] bg-[#343941] object-contain" />}
+      <h3 className="mt-3 text-base font-bold leading-6 text-[#242424]">{item.title}</h3>
+      <p className="mb-3 mt-2 text-sm leading-[22px] text-[#8a867f] line-clamp-2">{item.purpose[0]}</p>
+      <div className="mt-auto flex items-center justify-between gap-3 border-t border-[#ece8df] pt-2 text-xs text-[#77716a]">
         <span className="truncate">{item.sourceType}</span>
         {isAvailable ? <span className="font-semibold text-[#165DFF]">进入实验</span> : <span className="inline-flex items-center gap-1 font-semibold text-[#8a867f]"><LockKeyhole className="size-3.5" aria-hidden="true" />制作中</span>}
       </div>
@@ -36,10 +45,10 @@ function TextbookExperimentCard({ item }: { item: (typeof textbookPhysicsExperim
   )
 
   if (target) {
-    return <Link to={target} className="block rounded-[8px] border border-[#ece8df] bg-white p-4 transition hover:-translate-y-0.5 hover:border-[#8FB3FF] hover:shadow-[0_14px_32px_rgba(43,43,43,0.06)]">{cardContent}</Link>
+    return <Link to={target} className="flex h-full flex-col rounded-[8px] border border-[#ece8df] bg-white p-4 transition hover:-translate-y-0.5 hover:border-[#8FB3FF] hover:shadow-[0_14px_32px_rgba(43,43,43,0.06)]">{cardContent}</Link>
   }
 
-  return <div aria-disabled="true" className="rounded-[8px] border border-[#ece8df] bg-[#f7f7f5] p-4 opacity-75" title="制作中，暂不可进入实验">{cardContent}</div>
+  return <div aria-disabled="true" className="flex h-full flex-col rounded-[8px] border border-[#ece8df] bg-[#f7f7f5] p-4 opacity-75" title="制作中，暂不可进入实验">{cardContent}</div>
 }
 
 export default function TextbookPhysicsCatalog() {

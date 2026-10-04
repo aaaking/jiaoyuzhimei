@@ -47,10 +47,10 @@ export default function MeasurementTable({
 
   return (
     <div className="space-y-5">
-      {groups.map((group) => (
+      {groups.map((group, index) => (
         <section key={group.trialId} className="border-t border-[#ece8df] pt-4 first:border-t-0 first:pt-0">
           <div className="flex flex-wrap items-baseline justify-between gap-2">
-            <h3 className="text-sm font-semibold text-[#242424]">第 {group.trialId} 组</h3>
+            <h3 className="text-sm font-semibold text-[#242424]">第 {index + 1} 组</h3>
             <p className="text-xs text-[#8a867f]">
               {group.conditions.map((condition) => `${condition.label}: ${condition.value}`).join('；')}
             </p>

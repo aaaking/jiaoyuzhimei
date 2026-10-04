@@ -1,0 +1,14 @@
+{
+  "tests": 644,
+  "passed": 644,
+  "failed": 0,
+  "success": true,
+  "build": "tsc -b && vite build passed (14.68s)",
+  "eslint": "8 implementation files: 0 errors, 0 warnings",
+  "browser": "1280x720 actual UI, no viewport override",
+  "arrow_frame_changed_pixels": 79,
+  "final_preview_size": [
+    1079,
+    892
+  ]
+}

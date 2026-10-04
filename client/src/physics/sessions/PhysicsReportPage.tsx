@@ -1,4 +1,4 @@
-import { Link, useParams } from 'react-router-dom'
+import { Link, Navigate, useParams } from 'react-router-dom'
 import { textbookExperimentById } from '../curriculum/catalog'
 import type { TextbookPhysicsExperiment } from '../curriculum/types'
 import MeasurementTable from '../runtime/MeasurementTable'
@@ -65,6 +65,7 @@ export default function PhysicsReportPage() {
   }
 
   const { experiment, session } = resolution
+  if (experiment.id === 'ammeter-use') return <Navigate to="/physics/labs/ammeter-use" replace />
   const sections = physicsReportSections(session, experiment)
 
   return (

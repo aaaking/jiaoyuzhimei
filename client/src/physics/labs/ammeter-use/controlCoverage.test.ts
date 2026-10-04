@@ -563,9 +563,9 @@ describe('相机变化不得把器材拽回视野 —— 否则"平移画布"等
 
   it('「全部收回」仍然是显式入口（不是自动发生）', () => {
     const source = readFileSync(new URL('./CompetitorScene.tsx', import.meta.url), 'utf8')
-    expect(source).toContain('rescueAllComponents')
-    // 它必须挂在按钮的 onClick 上，而不是挂在相机回调里
-    expect(source).toMatch(/onClick=\{\(\) => setLayout\(\(current\) => rescueAllComponents/)
+    expect(source).toContain('把拖出屏幕的器材收回可见范围')
+    // 收回的几何效果由 canvasRecovery.test.tsx 覆盖，不绑定逐件移动的旧实现。
+    expect(source).toMatch(/onClick=\{\(\) => focusLayout\(layout\)/)
   })
 })
 

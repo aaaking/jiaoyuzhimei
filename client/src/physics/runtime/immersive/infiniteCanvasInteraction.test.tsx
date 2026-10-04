@@ -15,7 +15,7 @@
  * 为什么不用 `renderToString`：SSR 拿不到"按下空格再拖动之后相机动了多少"，
  * 而这正是用户唯一能感知的东西。
  */
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { act } from 'react'
@@ -203,6 +203,71 @@ function wheelEvent(init: { clientX: number; clientY: number; deltaY: number }):
   Object.assign(event, { deltaMode: 0, ...init })
   return event
 }
+
+describe('空白画布长按鼠标左键平移', () => {
+  function run(check: (h: Harness) => void) {
+    vi.useFakeTimers()
+    const h = mount()
+    try { check(h) } finally { h.unmount(); h.host.remove(); releaseRedirect(); vi.useRealTimers() }
+  }
+  it('覆盖整屏的 SVG 空白处长按300毫秒后跟手平移，松开后停止，并可重复拖动', () => run(h => {
+    const blank = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    h.stage.appendChild(blank)
+    const before = panOf(h.worldTransform())
+    act(() => blank.dispatchEvent(pointerEvent('pointerdown', { clientX: 700, clientY: 500 })))
+    act(() => { vi.advanceTimersByTime(299); dispatchPointer('pointermove', { clientX: 710, clientY: 505 }) })
+    expect(panOf(h.worldTransform())).toEqual(before)
+    act(() => vi.advanceTimersByTime(1))
+    expect(h.stage.className).toContain('cursor-grabbing')
+    expect(panOf(h.worldTransform())).toEqual(before)
+    act(() => { dispatchPointer('pointermove', { clientX: 810, clientY: 555 }); dispatchPointer('pointerup', { clientX: 810, clientY: 555 }) })
+    expect(panOf(h.worldTransform())).toEqual({ x: before.x + 100, y: before.y + 50 })
+    act(() => dispatchPointer('pointermove', { clientX: 910, clientY: 600, buttons: 0 }))
+    expect(panOf(h.worldTransform())).toEqual({ x: before.x + 100, y: before.y + 50 })
+    act(() => { blank.dispatchEvent(pointerEvent('pointerdown', { clientX: 700, clientY: 500 })); vi.advanceTimersByTime(300) })
+    act(() => { dispatchPointer('pointermove', { clientX: 680, clientY: 470 }); dispatchPointer('pointerup', { clientX: 680, clientY: 470 }) })
+    expect(panOf(h.worldTransform())).toEqual({ x: before.x + 80, y: before.y + 20 })
+  }))
+  it.each(['pointerup', 'pointercancel', 'blur'])('长按等待期间%s会取消，不会延迟抢走下一次操作', type => run(h => {
+    const before = panOf(h.worldTransform())
+    act(() => h.stage.dispatchEvent(pointerEvent('pointerdown', { clientX: 700, clientY: 500 })))
+    act(() => type === 'blur' ? window.dispatchEvent(new Event('blur')) : dispatchPointer(type, { clientX: 700, clientY: 500 }))
+    act(() => { vi.advanceTimersByTime(400); dispatchPointer('pointermove', { clientX: 900, clientY: 700, buttons: 0 }) })
+    expect(panOf(h.worldTransform())).toEqual(before)
+    expect(h.stage.className).not.toContain('cursor-grabbing')
+  }))
+  it.each(['data-component-drag', 'data-hit-target', 'data-wire-selectable', 'data-canvas-pan-block', 'data-detached-bulb'])('%s命中区长按不平移，点击仍交给该对象', marker => run(h => {
+    const item = document.createElement('div')
+    item.setAttribute(marker, '')
+    h.stage.appendChild(item)
+    const click = vi.fn()
+    item.addEventListener('click', click)
+    const before = panOf(h.worldTransform())
+    act(() => { item.dispatchEvent(pointerEvent('pointerdown', { clientX: 300, clientY: 200 })); vi.advanceTimersByTime(400) })
+    act(() => { item.dispatchEvent(pointerEvent('pointermove', { clientX: 500, clientY: 300 })); item.dispatchEvent(pointerEvent('pointerup', { clientX: 500, clientY: 300 })); item.click() })
+    expect(panOf(h.worldTransform())).toEqual(before)
+    expect(click).toHaveBeenCalledOnce()
+  }))
+  it('平移激活后失焦也会释放捕获并停止', () => run(h => {
+    const initial = panOf(h.worldTransform())
+    act(() => { h.stage.dispatchEvent(pointerEvent('pointerdown', { clientX: 700, clientY: 500 })); vi.advanceTimersByTime(300) })
+    act(() => dispatchPointer('pointermove', { clientX: 800, clientY: 600 }))
+    const beforeBlur = panOf(h.worldTransform())
+    expect(beforeBlur).toEqual({ x: initial.x + 100, y: initial.y + 100 })
+    act(() => window.dispatchEvent(new Event('blur')))
+    act(() => dispatchPointer('pointermove', { clientX: 900, clientY: 700, buttons: 0 }))
+    expect(panOf(h.worldTransform())).toEqual(beforeBlur)
+    expect(redirectTarget).toBeNull()
+  }))
+  it('卸载画布会取消等待中的长按并释放指针', () => run(h => {
+    act(() => h.stage.dispatchEvent(pointerEvent('pointerdown', { clientX: 700, clientY: 500 })))
+    expect(redirectTarget).toBe(h.stage)
+    act(() => h.root.render(<div />))
+    act(() => vi.advanceTimersByTime(500))
+    expect(redirectTarget).toBeNull()
+    expect(vi.getTimerCount()).toBe(0)
+  }))
+})
 
 describe('空格键 + 按住鼠标左键 = 任意拖动无限画布', () => {
   it('按住空格后，指针落在 SVG 上也能拖动画布（旧版本这里完全拖不动）', () => {

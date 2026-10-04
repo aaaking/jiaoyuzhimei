@@ -236,7 +236,7 @@ export default function InfiniteCanvas({
          * 平移监听挂在这里、并把指针捕获在这一层上（理由见该 hook 内的长注释）。
          */
         data-canvas-gesture-layer
-        className={`absolute inset-0 touch-none ${canvas.panReady ? 'cursor-grab' : 'cursor-default'}`}
+        className={`absolute inset-0 touch-none ${canvas.panActive ? 'cursor-grabbing' : canvas.panReady ? 'cursor-grab' : 'cursor-default'}`}
       >
         <div ref={innerRef} style={worldStyle} className="absolute left-0 top-0 select-none">
           {children}
@@ -260,10 +260,10 @@ export default function InfiniteCanvas({
         </div>
       )}
 
-      <div className="pointer-events-none absolute bottom-4 left-1/2 z-30 -translate-x-1/2">
+      <div className="pointer-events-none absolute bottom-4 left-4 z-30">
         <span className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-[#22262c]/80 px-3 py-1.5 text-[12px] text-[#9aa4b2] backdrop-blur">
           <Move className="size-3.5" aria-hidden="true" />
-          滚轮缩放 · 空格+拖动平移 · 中键/右键拖动 · {Math.round(camera.scale * 100)}%
+          滚轮缩放 · 空白处长按左键拖动 · 空格+拖动平移 · 中键/右键拖动 · {Math.round(camera.scale * 100)}%
         </span>
       </div>
     </div>

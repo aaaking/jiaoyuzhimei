@@ -1,87 +1,66 @@
-/**
- * 「转电路图」原理图视图：按人教版标准电路符号绘制。
- * 对应竞品左上角「转电路图」按钮切换后的画面 —— 符号 + 电流方向 + 实时读数。
- */
 import { RANGE_SPEC } from './definition'
-import type { AmmeterLabState } from './controller'
+import { evaluatePracticeCircuit, type PracticeState } from './practiceController'
+import { lampSettingsFor } from './lampSettings'
+import { batterySettingsFor } from './batterySettings'
+import { terminalPosition, wireKey, wirePathD, type LabLayout } from './layout'
+import { createReferenceLayout } from './referenceLayout'
+import { switchSettingsFor } from './switchSettings'
 
 const ink = '#e8edf3'
-const accent = '#e8756a'
-
-function SchematicBulb({ x, y, lit, label }: { x: number; y: number; lit: boolean; label: string }) {
-  return (
-    <g>
-      <circle cx={x} cy={y} r="20" fill={lit ? '#ffe9a8' : 'none'} stroke={lit ? '#f0c86a' : ink} strokeWidth="3" />
-      <line x1={x - 12} y1={y - 12} x2={x + 12} y2={y + 12} stroke={lit ? '#f0c86a' : ink} strokeWidth="2.5" />
-      <line x1={x + 12} y1={y - 12} x2={x - 12} y2={y + 12} stroke={lit ? '#f0c86a' : ink} strokeWidth="2.5" />
-      <text x={x} y={y + 42} fill={ink} fontSize="15" fontWeight="700" textAnchor="middle">{label}</text>
-    </g>
-  )
+function SwitchSymbol({ x, y, left, right, closed, label, id, reversed, angle }: { x: number; y: number; left: number; right: number; closed: boolean; label: string; id: string; reversed: boolean; angle: number }) {
+  return <g data-switch={id} data-closed={closed} transform={`rotate(${angle} ${x} ${y})`}>
+    <g transform={reversed ? `translate(${2 * x} 0) scale(-1 1)` : undefined}>
+    <path d={`M ${left} ${y} H ${x - 12} M ${x + 12} ${y} H ${right} M ${x - 12} ${y} L ${x + 12} ${closed ? y : y - 28}`} fill="none" stroke={ink} strokeWidth="3" />
+    <circle cx={x - 12} cy={y} r="4" fill={ink} /><circle cx={x + 12} cy={y} r="4" fill={ink} />
+    </g><text x={x} y={y + 40} textAnchor="middle">{label}</text>
+  </g>
 }
 
-function SchematicSwitch({ x, y, closed, label }: { x: number; y: number; closed: boolean; label: string }) {
-  return (
-    <g>
-      <line x1={x - 34} y1={y} x2={x - 8} y2={y} stroke={ink} strokeWidth="3" />
-      <line x1={x + 34} y1={y} x2={x + 8} y2={y} stroke={ink} strokeWidth="3" />
-      <line x1={x - 8} y1={y} x2={closed ? x + 8 : x + 4} y2={closed ? y : y - 26} stroke={ink} strokeWidth="3" />
-      <circle cx={x - 8} cy={y} r="4" fill={ink} />
-      <circle cx={x + 8} cy={y} r="4" fill={ink} />
-      <text x={x} y={y + 34} fill={ink} fontSize="15" fontWeight="700" textAnchor="middle">{label}</text>
-    </g>
-  )
-}
-
-export function AmmeterSchematic({ state, reading }: { state: AmmeterLabState; reading: number }) {
-  const lit = state.switchClosed && reading > 0
-  const rangeLabel = state.activeRange === null ? '未接入电流表' : `${RANGE_SPEC[state.activeRange].label}`
-
-  return (
-    <g>
-      <text x="60" y="60" fill={ink} fontSize="17" fontWeight="700">练习使用电流表 · 电路图</text>
-      <text x="60" y="86" fill="#9aa4b2" fontSize="13">电流表串联在待测电路中，电流从“+”接线柱流入</text>
-
-      {/* 主回路 */}
-      <path d="M 200 360 L 200 440 L 800 440 L 800 200 L 200 200 L 200 250" fill="none" stroke={ink} strokeWidth="3" />
-
-      {/* 电源 E1 */}
-      <g>
-        <line x1="186" y1="250" x2="214" y2="250" stroke={ink} strokeWidth="3" />
-        <line x1="176" y1="268" x2="224" y2="268" stroke={ink} strokeWidth="3" />
-        <line x1="186" y1="286" x2="214" y2="286" stroke={ink} strokeWidth="3" />
-        <line x1="176" y1="304" x2="224" y2="304" stroke={ink} strokeWidth="3" />
-        <text x="146" y="282" fill={ink} fontSize="16" fontWeight="700" textAnchor="middle">E1</text>
-        <text x="238" y="244" fill={accent} fontSize="14" fontWeight="700">+</text>
-        <text x="238" y="320" fill={ink} fontSize="14" fontWeight="700">－</text>
-      </g>
-
-      {/* 开关 S1（干路） */}
-      <SchematicSwitch x={330} y={440} closed={state.switchClosed} label="S1" />
-      {/* 开关 S2（支路侧） */}
-      <SchematicSwitch x={330} y={200} closed={state.switchClosed} label="S2" />
-
-      {/* 灯泡 L1 */}
-      <SchematicBulb x={560} y={200} lit={lit} label="L1" />
-
-      {/* 电流表 A1 */}
-      <g transform="translate(760 320)">
-        <circle cx="0" cy="0" r="32" fill="#3b4048" stroke={ink} strokeWidth="3" />
-        <text x="0" y="9" fill={ink} fontSize="22" fontWeight="700" textAnchor="middle">A</text>
-        <text x="46" y="9" fill={ink} fontSize="15" fontWeight="700" textAnchor="middle">A1</text>
-        <text x="-22" y="-40" fill={accent} fontSize="14" fontWeight="700">+</text>
-        <text x="-22" y="50" fill={ink} fontSize="14" fontWeight="700">－</text>
-      </g>
-
-      {/* 读数 */}
-      <rect x="560" y="104" width="240" height="34" rx="6" fill="#3b4048" stroke="#5a616a" />
-      <text x="680" y="127" fill="#f0c86a" fontSize="14" fontWeight="700" textAnchor="middle">{rangeLabel} · {reading.toFixed(2)} A</text>
-
-      {/* 电流方向 */}
-      <g fill={accent}>
-        <path d="M 262 440 l 14 6 l -14 6 z" />
-        <path d="M 740 260 l 6 -12 l 6 12 z" />
-      </g>
-      <text x="252" y="424" fill={accent} fontSize="13" fontWeight="700">电流 I</text>
-    </g>
-  )
+/** 使用实物图的同一份导线和布局，避免切换视图后出现另一张电路。 */
+export function AmmeterSchematic({ state, reading, layout = createReferenceLayout(), selectedWire, onSelectWire }: { state: PracticeState; reading: number; layout?: LabLayout; selectedWire?: string | null; onSelectWire?(key: string): void }) {
+  const { E1, S1, S2, L1, A1 } = layout.components
+  const p = (id: Parameters<typeof terminalPosition>[1]) => terminalPosition(layout, id)
+  const meterPositive = p(state.activeRange === '0.6A' ? 'ammeter-0.6' : 'ammeter-3')
+  const battery = batterySettingsFor(state)
+  const lamp = lampSettingsFor(state)
+  const lampOpen = Boolean(state.bulbDetached || state.lampDamaged || lamp.broken)
+  const lampLit = evaluatePracticeCircuit(state).lampLit
+  const s1 = switchSettingsFor(state, 'S1'), s2 = switchSettingsFor(state, 'S2')
+  const switchTerminal = (id: Parameters<typeof terminalPosition>[1]) => terminalPosition({ ...layout, componentAngles: undefined, componentReversed: undefined }, id).x
+  return <g fill={ink} fontSize="18" fontFamily="Arial, sans-serif">
+    <text x={S2.x - 120} y={S2.y - 70} fontSize="16">练习使用电流表 · 电路图</text>
+    {state.edges.map((edge, index) => <g key={`${edge.from}:${edge.to}`} data-wire-selectable data-wire-hit={wireKey(edge.from, edge.to)} role="button" tabIndex={0} aria-pressed={selectedWire === wireKey(edge.from, edge.to)}
+      aria-label={`选择电路图连接线 ${index + 1}`}
+      onClick={() => onSelectWire?.(wireKey(edge.from, edge.to))}
+      onKeyDown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); onSelectWire?.(wireKey(edge.from, edge.to)) } }}
+    >
+      <path data-schematic-wire={`${edge.from}:${edge.to}`} d={wirePathD(layout, edge.from, edge.to)} fill="none" stroke={selectedWire === wireKey(edge.from, edge.to) ? '#f0bd56' : ink} strokeWidth="3" />
+      <path d={wirePathD(layout, edge.from, edge.to)} fill="none" stroke="transparent" strokeWidth="16" pointerEvents="stroke" className="cursor-pointer" />
+    </g>)}
+    {!s1.removed && <SwitchSymbol {...S1} left={switchTerminal('switch-a')} right={switchTerminal('switch-b')} closed={state.switchClosed && !s1.broken} label={`${s1.namePrefix}${s1.nameNumber}`} id="S1" reversed={s1.reversed} angle={s1.angle} />}
+    {!s2.removed && <SwitchSymbol {...S2} left={switchTerminal('lamp2-a')} right={switchTerminal('lamp2-b')} closed={Boolean(state.bypassClosed) && !s2.broken} label={`${s2.namePrefix}${s2.nameNumber}`} id="S2" reversed={s2.reversed} angle={s2.angle} />}
+    {!lamp.removed && <g data-schematic-lamp>
+      <g transform={`rotate(${lamp.angle} ${L1.x} ${L1.y})`}><g transform={lamp.reversed ? `translate(${2 * L1.x} 0) scale(-1 1)` : undefined}>
+        <path d={`M ${switchTerminal('lamp1-a')} ${L1.y} H ${L1.x - 22} M ${L1.x + 22} ${L1.y} H ${switchTerminal('lamp1-b')}`} fill="none" stroke={ink} strokeWidth="3" />
+        <circle cx={L1.x} cy={L1.y} r="22" fill={lampLit ? '#ffe9a8' : '#343941'} stroke={ink} strokeWidth="3" strokeDasharray={lampOpen && !lamp.shorted ? '4 5' : undefined} />
+        {lamp.shorted ? <path d={`M ${L1.x - 22} ${L1.y} H ${L1.x + 22}`} stroke="#ff7466" strokeWidth="3" /> : !lampOpen && <path d={`M ${L1.x - 14} ${L1.y - 14} l 28 28 M ${L1.x + 14} ${L1.y - 14} l -28 28`} stroke={lampLit ? '#c18a28' : ink} strokeWidth="2" />}
+      </g></g><text x={L1.x} y={L1.y + 46} textAnchor="middle">{`${lamp.namePrefix}${lamp.nameNumber}`}</text>
+    </g>}
+    {!battery.removed && <g data-schematic-battery>
+      <g transform={`rotate(${battery.angle} ${E1.x} ${E1.y})`}>
+        <path d={`M ${switchTerminal('battery-')} ${E1.y} H ${E1.x - 24} M ${E1.x + 24} ${E1.y} H ${switchTerminal('battery+')}`} fill="none" stroke={ink} strokeWidth="3" />
+        <g transform={battery.reversed ? `translate(${2 * E1.x} 0) scale(-1 1)` : undefined}>
+          <path d={`M ${E1.x - 24} ${E1.y - 12} v 24 M ${E1.x - 8} ${E1.y - 24} v 48 M ${E1.x + 8} ${E1.y - 12} v 24 M ${E1.x + 24} ${E1.y - 24} v 48`} fill="none" stroke={ink} strokeWidth="3" />
+        </g><text x={E1.x + (battery.reversed ? -50 : 40)} y={E1.y - 26}>+</text>
+      </g><text x={E1.x} y={E1.y + 50} textAnchor="middle">{`${battery.namePrefix}${battery.nameNumber}`}</text>
+    </g>}
+    {!state.meterRemoved && <g data-schematic-meter>
+      <path d={`M ${p('ammeter-neg').x} ${A1.y} H ${A1.x - 28} M ${meterPositive.x} ${A1.y} H ${A1.x + 28}`} fill="none" stroke={ink} strokeWidth="3" />
+      <circle cx={A1.x} cy={A1.y} r="28" fill="#343941" stroke={ink} strokeWidth="3" />
+      <text x={A1.x} y={A1.y + 8} fontSize="24" textAnchor="middle">A</text>
+      <text x={A1.x} y={A1.y + 55} textAnchor="middle">{state.meterSettings ? `${state.meterSettings.namePrefix}${state.meterSettings.nameNumber}` : 'A1'}</text>
+      <text x={A1.x} y={A1.y - 55} textAnchor="middle" fontSize="15">{state.meterDamaged ? '已损坏' : state.activeRange ? RANGE_SPEC[state.activeRange].label : '未接入电流表'} · {reading.toFixed(state.meterSettings?.decimals ?? 2)} A</text>
+      <text x={A1.x + 38} y={A1.y - 20} fontSize="13">电流 I</text>
+    </g>}
+  </g>
 }

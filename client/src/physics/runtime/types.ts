@@ -8,6 +8,8 @@ export interface LabAction {
 export interface LabFeedback {
   outcome: 'accepted' | 'rejected'
   message: string
+  /** 场景已展示的现象不再重复弹出操作提示。 */
+  presentation?: 'scene'
 }
 
 export interface LabTransition<TState> {
@@ -37,6 +39,7 @@ export interface LabReportSummary {
 
 export interface LabController<TState> {
   createInitialState(): TState
+  createResetState?(): TState
   reduce(state: TState, action: LabAction): LabTransition<TState>
   deriveMeasurements(state: TState): readonly DerivedMeasurement[]
   snapshot(state: TState): JsonValue

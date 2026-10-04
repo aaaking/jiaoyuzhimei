@@ -3,7 +3,7 @@ import type { TextbookPhysicsExperiment } from '../curriculum/types'
 import { HeatCapacityLab } from './heat-capacity/HeatCapacityScene'
 import { SeriesParallelLab } from './series-parallel/SeriesParallelScene'
 import { ElectromagneticInductionLab } from './electromagnetic-induction/ElectromagneticInductionScene'
-import { AmmeterLab } from './ammeter-use/CompetitorScene'
+import { AmmeterLab } from './ammeter-use/CompetitorScene.tsx'
 
 export interface RegisteredLab {
   experimentId: string

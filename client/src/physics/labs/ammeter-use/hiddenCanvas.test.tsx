@@ -26,7 +26,7 @@
 import { describe, expect, it } from 'vitest'
 import { readFileSync } from 'node:fs'
 import { renderToString } from 'react-dom/server'
-import { AmmeterScene } from './CompetitorScene'
+import { AmmeterScene } from './CompetitorScene.tsx'
 import { createAmmeterState } from './controller'
 import {
   CONTROL_BOTTOM,
@@ -255,11 +255,11 @@ describe('界面上不再有任何"拖动小框"', () => {
     expect(render()).not.toContain('stroke-dasharray="6 5"')
   })
 
-  it('操作提示仍然在（去掉方框不等于去掉提示）', () => {
+  it('按新需求移除左上使用说明模块', () => {
     const html = render()
-    expect(html).toContain('全屏画布任意摆放')
-    expect(html).toContain('拖导线中点可弯折')
-    expect(html).toContain('拖接线柱接导线')
+    expect(html).not.toContain('全屏画布任意摆放')
+    expect(html).not.toContain('拖导线中点可弯折')
+    expect(html).not.toContain('拖接线柱接导线')
   })
 })
 
@@ -276,8 +276,8 @@ describe('接线与拖动的能力不因这次改动退化', () => {
     expect(html).toContain('perspective:1600px')
     expect(html).toContain('rotateX(')
     expect(html).toContain('滚轮缩放')
-    expect(html).toContain('复位视角')
-    expect(html).toContain('铺满画布')
+    expect(html).not.toContain('aria-label="复位视角"')
+    expect(html).not.toContain('aria-label="铺满画布"')
   })
 
   it('画布本身仍然不画任何背景方框（无桌面矩形 / 无网格 / 无暗角）', () => {
