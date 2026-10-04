@@ -8,21 +8,22 @@ type ReportDocument = { title: string; sections: ReportSection[] }
 const STORAGE_KEY = 'physics:ammeter-use:instruction-report:v1'
 const fieldClass = 'w-full rounded border border-[#d8d2c8] bg-white px-2 py-1 text-sm text-[#4b4742]'
 const buttonClass = 'rounded border border-[#d8d2c8] px-2 py-1 text-xs text-[#4b4742] hover:bg-[#eeeae3] disabled:opacity-40'
+type InstructionSection = { title: string; paragraphs: readonly string[] }
 
-function initialReport(): ReportDocument {
+function initialReport(sections: readonly InstructionSection[]): ReportDocument {
   return {
     title: '实验报告',
-    sections: COMPETITOR_TEXT_PANEL.map((section, index) => {
+    sections: sections.map((section, index) => {
       const blocks: ReportBlock[] = section.paragraphs.map((text, paragraph) => ({ id: `${index}-${paragraph}`, type: 'text', text }))
-      if (section.title === '步骤') blocks.splice(2, 0, { id: 'circuit', type: 'image', src: reportCircuitImage, alt: '串联电路图：电源、开关、电流表和灯泡串联' })
+      if (sections === COMPETITOR_TEXT_PANEL && section.title === '步骤') blocks.splice(2, 0, { id: 'circuit', type: 'image', src: reportCircuitImage, alt: '串联电路图：电源、开关、电流表和灯泡串联' })
       return { id: `section-${index}`, title: section.title, blocks }
     }),
   }
 }
 
-function loadReport(): ReportDocument {
+function loadReport(storageKey: string, sections: readonly InstructionSection[]): ReportDocument {
   try {
-    const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || 'null') as ReportDocument | null
+    const saved = JSON.parse(window.localStorage.getItem(storageKey) || 'null') as ReportDocument | null
     if (saved && typeof saved.title === 'string' && Array.isArray(saved.sections)) return {
       ...saved,
       sections: saved.sections.map((section) => ({
@@ -31,18 +32,18 @@ function loadReport(): ReportDocument {
       })),
     }
   } catch { /* 无保存内容时使用默认报告。 */ }
-  return initialReport()
+  return initialReport(sections)
 }
 
-export default function ReportDrawer({ open, onClose, footer }: { open: boolean; onClose(): void; footer?: ReactNode }) {
-  const [document, setDocument] = useState(loadReport)
+export default function ReportDrawer({ open, onClose, footer, storageKey = STORAGE_KEY, sections = COMPETITOR_TEXT_PANEL }: { open: boolean; onClose(): void; footer?: ReactNode; storageKey?: string; sections?: readonly InstructionSection[] }) {
+  const [document, setDocument] = useState(() => loadReport(storageKey, sections))
   const [editing, setEditing] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [error, setError] = useState('')
 
   function save() {
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(document))
+      window.localStorage.setItem(storageKey, JSON.stringify(document))
       setError('')
       return true
     } catch {

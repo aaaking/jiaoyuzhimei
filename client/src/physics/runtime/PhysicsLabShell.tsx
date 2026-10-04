@@ -20,6 +20,7 @@ export interface PhysicsLabSceneProps<TState> {
   state: TState
   dispatch(action: LabAction, detail?: string): void
   onOpenReport?(): void
+  readOnly?: boolean
 }
 
 export interface PhysicsLabShellProps<TState> {
@@ -40,6 +41,9 @@ export interface PhysicsLabShellProps<TState> {
   showActionLabels?: boolean
   showFooter?: boolean
   ReportView?: ComponentType<{ open: boolean; onClose(): void; footer?: ReactNode }>
+  measurementLabel?: string
+  recordAction?: LabAction
+  MeasurementControls?: ComponentType<PhysicsLabSceneProps<TState>>
 }
 
 export const LAB_DESKTOP_LAYOUT = {
@@ -80,6 +84,9 @@ export default function PhysicsLabShell<TState>({
   showActionLabels = false,
   showFooter = true,
   ReportView,
+  recordAction,
+  measurementLabel,
+  MeasurementControls,
 }: PhysicsLabShellProps<TState>) {
   const runtime = useLabRuntime(controller)
   const coordinatorRef = useRef<ReturnType<typeof createLabSessionCoordinator> | null>(null)
@@ -137,6 +144,10 @@ export default function PhysicsLabShell<TState>({
 
   function recordCurrentMeasurements() {
     if (!session || isCompleted) return
+    if (recordAction) {
+      dispatchSemantic(recordAction)
+      return
+    }
     applySynchronized(synchronizeState(runtime.state, {
       action: 'record-measurement',
       feedback: { outcome: 'accepted', message: '已同步当前读数' },
@@ -235,24 +246,26 @@ export default function PhysicsLabShell<TState>({
         onPanelChange={(panelId) => { setReportOpen(false); setOpenPanel(panelId) }}
         actions={[
           { id: 'undo', label: '撤销', icon: <UndoIcon />, onClick: () => runToolbarCommand('undo'), disabled: isCompleted },
-          ...(experiment.id === 'ammeter-use' ? [] : [{ id: 'redo', label: '重做', icon: <RedoIcon />, onClick: () => runToolbarCommand('redo'), disabled: isCompleted }]),
+          ...(['ammeter-use', 'archimedes-principle'].includes(experiment.id) ? [] : [{ id: 'redo', label: '重做', icon: <RedoIcon />, onClick: () => runToolbarCommand('redo'), disabled: isCompleted }]),
           { id: 'reset', label: '重置实验', icon: <ResetIcon />, onClick: () => runToolbarCommand('reset') },
         ]}
         panels={[
           {
             id: 'table',
-            label: experiment.id === 'ammeter-use' ? '实验数据' : '数据表格',
+            label: measurementLabel ?? (experiment.id === 'ammeter-use' ? '实验数据' : '数据表格'),
             title: experiment.id === 'ammeter-use' ? '实验结果数据' : undefined,
             content: (
               <div className="space-y-4">
-                <button
+                {MeasurementControls && <MeasurementControls state={runtime.state} dispatch={dispatchSemantic} readOnly={isCompleted} />}
+                {experiment.id !== 'archimedes-principle' && <button
                   type="button"
                   onClick={recordCurrentMeasurements}
                   disabled={isCompleted}
                   className="rounded-[6px] border border-[#165DFF] px-4 py-2 text-sm font-semibold text-[#165DFF] disabled:cursor-not-allowed disabled:opacity-40"
                 >
-                  记录当前读数
-                </button>
+                  {recordAction ? '记录本组数据' : '记录当前读数'}
+                </button>}
+                {MeasurementControls && runtime.feedback && <p role="status" className="text-sm text-[#4b4742]">{runtime.feedback.message}</p>}
                 <MeasurementTable measurements={recordedMeasurements} />
               </div>
             ),
@@ -299,7 +312,7 @@ export default function PhysicsLabShell<TState>({
                 disabled={isCompleted}
                 className="rounded-[6px] border border-[#165DFF] px-4 py-2 text-sm font-semibold text-[#8FB3FF] disabled:cursor-not-allowed disabled:opacity-40"
               >
-                记录当前读数
+                {recordAction ? '记录本组数据' : '记录当前读数'}
               </button>
               <span className="inline-flex items-center gap-1 rounded-[6px] border border-white/10 px-2 py-1.5 text-[12px] text-[#9aa4b2]">
                 <ReportIcon />
@@ -318,7 +331,7 @@ export default function PhysicsLabShell<TState>({
           </> : null
         }
       >
-        <Scene state={runtime.state} dispatch={dispatchSemantic} onOpenReport={ReportView ? openReportView : undefined} />
+        <Scene state={runtime.state} dispatch={dispatchSemantic} onOpenReport={ReportView ? openReportView : undefined} readOnly={isCompleted} />
         {ReportView && <ReportView open={reportOpen} onClose={() => setReportOpen(false)} footer={<div className="flex gap-2">
           <button type="button" onClick={() => { setReportOpen(false); setOpenPanel('table') }} className="rounded-[6px] border border-[#d8d2c8] px-3 py-1.5 text-xs text-[#4b4742]">查看实验数据</button>
         </div>} />}
@@ -359,7 +372,7 @@ export default function PhysicsLabShell<TState>({
           </div>
           <div className="mt-4 flex min-h-[480px] items-stretch overflow-hidden border border-[#dedad2] bg-[#fdfdfc] md:min-h-[300px] md:aspect-[16/9] 2xl:min-h-[480px]">
             <div className="min-w-0 flex-1">
-              <Scene state={runtime.state} dispatch={dispatchSemantic} />
+              <Scene state={runtime.state} dispatch={dispatchSemantic} readOnly={isCompleted} />
             </div>
           </div>
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#ece8df] pt-4">

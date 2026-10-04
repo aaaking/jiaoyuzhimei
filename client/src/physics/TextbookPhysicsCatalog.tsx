@@ -14,6 +14,7 @@ const requirementLabels: Record<ExperimentRequirement, string> = {
 
 const experimentThumbnails: Readonly<Record<string, string>> = {
   'heat-capacity-comparison': 'physics/thumbnails/heat-capacity-comparison.png',
+  'archimedes-principle': 'physics/thumbnails/archimedes-principle.png',
   'series-parallel-circuit': 'physics/thumbnails/series-parallel-circuit.png',
   'ammeter-use': 'physics/thumbnails/ammeter-use.png',
   'electromagnetic-induction': 'physics/thumbnails/electromagnetic-induction.png',

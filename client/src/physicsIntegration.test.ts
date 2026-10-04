@@ -65,11 +65,13 @@ describe('physics project integration', () => {
     expect(physicsExperiments).toHaveLength(133)
     expect([...labRegistry.keys()].sort()).toEqual([
       'ammeter-use',
+      'archimedes-principle',
       'electromagnetic-induction',
       'heat-capacity-comparison',
       'series-parallel-circuit',
     ])
     expect(availableExperimentIds).toEqual([
+      'archimedes-principle',
       'heat-capacity-comparison',
       'series-parallel-circuit',
       'ammeter-use',

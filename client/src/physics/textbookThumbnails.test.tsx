@@ -2,29 +2,35 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { renderToStaticMarkup } from 'react-dom/server'
+import { act } from 'react'
+import { createRoot, type Root } from 'react-dom/client'
 import { MemoryRouter } from 'react-router-dom'
 import TextbookPhysicsCatalog from './TextbookPhysicsCatalog'
 import { textbookPhysicsExperiments } from './curriculum/catalog'
 
+let root: Root | undefined
 function catalog() {
   const host = document.createElement('div')
-  host.innerHTML = renderToStaticMarkup(<MemoryRouter><TextbookPhysicsCatalog /></MemoryRouter>)
+  document.body.append(host)
+  root = createRoot(host)
+  act(() => root!.render(<MemoryRouter><TextbookPhysicsCatalog /></MemoryRouter>))
+  // 可用实验现跨两个年级，实际切换“全部教材”后验证所有可进入的卡片。
+  act(() => Array.from(host.querySelectorAll('button')).find(button => button.textContent === '全部教材')!.click())
   return host
 }
 
-afterEach(() => vi.unstubAllEnvs())
+afterEach(() => { act(() => root?.unmount()); root = undefined; document.body.innerHTML = ''; vi.unstubAllEnvs() })
 
 describe('教材实验主视觉缩略图', () => {
   it('子路径部署时图片跟随实际部署基础路径', () => {
     vi.stubEnv('BASE_URL', '/jiaoyuzhimei/')
     const images = catalog().querySelectorAll('a img')
-    expect(images).toHaveLength(4)
+    expect(images).toHaveLength(5)
     for (const image of images) {
       expect(image.getAttribute('src')).toMatch(/^\/jiaoyuzhimei\/physics\/thumbnails\/[^/]+\.png$/)
     }
   })
-  it('四个可用实验的图片在章节与名称之间，沿用正确的详情链接', () => {
+  it('可用实验的图片在章节与名称之间，沿用正确的详情链接', () => {
     const host = catalog()
     const available = textbookPhysicsExperiments.filter(item => item.availability === 'available')
     expect(host.querySelectorAll('a img')).toHaveLength(available.length)

@@ -431,7 +431,7 @@ describe('physics lab shell', () => {
     expect(source).toContain('md:min-h-[300px] md:aspect-[16/9]')
     expect(source).not.toContain('flex aspect-[16/9] min-h-[300px]')
     expect(source).toContain('<div className="min-w-0 flex-1">')
-    expect(source).toContain('<Scene state={runtime.state} dispatch={dispatchSemantic} />')
+    expect(source).toContain('<Scene state={runtime.state} dispatch={dispatchSemantic} readOnly={isCompleted} />')
   })
 
   it('renders Stage A scene roots that fill the fluid child and a non-overlapping heat tray', () => {

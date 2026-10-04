@@ -41,6 +41,7 @@ export interface LabController<TState> {
   createInitialState(): TState
   createResetState?(): TState
   reduce(state: TState, action: LabAction): LabTransition<TState>
+  isSimulationAction?(action: LabAction): boolean
   deriveMeasurements(state: TState): readonly DerivedMeasurement[]
   snapshot(state: TState): JsonValue
   restore(snapshot: unknown): TState

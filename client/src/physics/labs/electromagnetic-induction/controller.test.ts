@@ -255,6 +255,7 @@ describe('electromagnetic induction controller', () => {
   it('registers every available benchmark lab with matching catalog labIds', () => {
     const available = textbookPhysicsExperiments.filter((experiment) => experiment.availability === 'available')
     expect(available.map((experiment) => experiment.id)).toEqual([
+      'archimedes-principle',
       'heat-capacity-comparison',
       'series-parallel-circuit',
       'ammeter-use',
@@ -262,6 +263,7 @@ describe('electromagnetic induction controller', () => {
     ])
     expect(available.map((experiment) => experiment.labId)).toEqual([...labRegistry.keys()])
     expect([...labRegistry.keys()]).toEqual([
+      'archimedes-principle',
       'heat-capacity-comparison',
       'series-parallel-circuit',
       'ammeter-use',

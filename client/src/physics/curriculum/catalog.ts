@@ -75,7 +75,7 @@ const measurementDefinitionsByTitle: Readonly<Record<string, readonly Measuremen
   '探究液体内部压强的特点': [raw('depth', '深度', 'cm', 1), raw('heightDifference', '液面高度差', 'cm', 1), derived('pressureDifference', '压强差', 'Pa', 1)],
   '托里拆利实验': [raw('mercuryHeight', '水银柱高度', 'mm', 1), derived('atmosphericPressure', '大气压强', 'Pa', 0)],
   '探究浮力大小跟哪些因素有关': [raw('gravity', '物体重力', 'N', 2), raw('tension', '拉力', 'N', 2), derived('buoyancy', '浮力', 'N', 2)],
-  '探究浮力大小跟排开液体所受重力的关系': [raw('buoyancy', '浮力', 'N', 2), raw('displacedLiquidGravity', '排开液体重力', 'N', 2), derived('difference', '两者差值', 'N', 2)],
+  '探究浮力大小跟排开液体所受重力的关系': [raw('objectGravity', '物体重', 'N', 2), raw('bucketGravity', '空桶重', 'N', 2), raw('tension', '液中示数', 'N', 2), raw('filledBucketGravity', '桶液总重', 'N', 2), derived('buoyancy', '浮力', 'N', 2), derived('displacedLiquidGravity', '排开液体重力', 'N', 2), derived('difference', '两者差值', 'N', 2)],
   '探究动能大小与哪些因素有关': [raw('mass', '质量', 'g', 1), raw('releaseHeight', '释放高度', 'cm', 1), derived('travelDistance', '木块移动距离', 'cm', 1)],
   '探究重力势能大小与哪些因素有关': [raw('mass', '质量', 'g', 1), raw('height', '高度', 'cm', 1), derived('indentationDepth', '下陷程度', 'cm', 1)],
   '探究杠杆的平衡条件': [raw('effort', '动力', 'N', 2), raw('effortArm', '动力臂', 'cm', 1), raw('load', '阻力', 'N', 2), raw('loadArm', '阻力臂', 'cm', 1), derived('torqueDifference', '力矩差', 'N·cm', 2)],
@@ -128,7 +128,7 @@ function experiment(row: WorkbookExperiment): TextbookPhysicsExperiment {
     conclusion: [row.conclusion],
     supplement: [row.supplement],
     measurements: measurementsFor(row.title),
-    ...(row.id === 'heat-capacity-comparison' || row.id === 'series-parallel-circuit' || row.id === 'ammeter-use' || row.id === 'electromagnetic-induction'
+    ...(row.id === 'heat-capacity-comparison' || row.id === 'archimedes-principle' || row.id === 'series-parallel-circuit' || row.id === 'ammeter-use' || row.id === 'electromagnetic-induction'
       ? { availability: 'available' as const, labId: row.id }
       : { availability: 'scheduled' as const }),
   }

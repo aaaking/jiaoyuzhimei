@@ -19,7 +19,7 @@ describe('physics catalog state', () => {
 
   it('exposes the benchmark cards as the available labs', () => {
     expect(textbookPhysicsExperiments).toHaveLength(65)
-    const availableIds = ['heat-capacity-comparison', 'series-parallel-circuit', 'ammeter-use', 'electromagnetic-induction']
+    const availableIds = ['archimedes-principle', 'heat-capacity-comparison', 'series-parallel-circuit', 'ammeter-use', 'electromagnetic-induction']
     expect(textbookPhysicsExperiments.filter((item) => item.availability === 'available').map((item) => item.id)).toEqual(availableIds)
     expect(textbookPhysicsExperiments.map(getTextbookExperimentTarget)).toEqual(
       textbookPhysicsExperiments.map((item) => availableIds.includes(item.id) ? `/physics/labs/${item.id}` : undefined),

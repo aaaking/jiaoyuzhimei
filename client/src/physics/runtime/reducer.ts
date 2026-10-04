@@ -65,8 +65,8 @@ function reduceSemanticAction<TState>(
 
   return withController({
     present: transition.state,
-    past: appendHistory(runtime.past, runtime.present),
-    future: [],
+    past: controller.isSimulationAction?.(action) ? runtime.past : appendHistory(runtime.past, runtime.present),
+    future: controller.isSimulationAction?.(action) ? runtime.future : [],
     feedback: transition.feedback,
   }, controller)
 }
